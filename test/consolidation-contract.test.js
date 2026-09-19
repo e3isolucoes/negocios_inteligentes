@@ -49,3 +49,15 @@ test('assets do módulo usam a mesma versão consolidada de cache', async () => 
   assert.match(app, new RegExp(version));
   assert.match(render, new RegExp(version));
 });
+
+
+test('Painel remove chrome duplicado quando montado no shell global', async () => {
+  const [appSource, css] = await Promise.all([
+    readFile(new URL('../painel-obrigacoes/js/app.js', import.meta.url), 'utf8'),
+    readFile(new URL('../painel-obrigacoes/css/styles.css', import.meta.url), 'utf8'),
+  ]);
+  assert.match(appSource, /window\.self !== window\.top/);
+  assert.match(appSource, /embedded-module/);
+  assert.match(css, /body\.embedded-module \.app-sidebar/);
+  assert.match(css, /body\.embedded-module \.global-header/);
+});
