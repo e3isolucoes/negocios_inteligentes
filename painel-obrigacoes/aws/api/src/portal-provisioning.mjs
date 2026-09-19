@@ -138,7 +138,7 @@ export async function provisionPortalAccess(client, tableName, input) {
     { Update: {
       TableName: tableName,
       Key: { PK: genericPk, SK: memberSk(data.userId) },
-      UpdateExpression: 'SET userId=:userId, workspaceId=:workspaceId, #email=:email, active=:true, #role=if_not_exists(#role,:member), GSI1PK=:gsi1pk, GSI1SK=:gsi1sk, toolId=:tool, environment=:environment, entityType=:memberEntity, schemaVersion=:schema, updated_at=:now, created_at=if_not_exists(created_at,:now)',
+      UpdateExpression: 'SET userId=:userId, workspaceId=:workspaceId, #email=:email, active=:true, #role=if_not_exists(#role,:member), module_grants=if_not_exists(module_grants,:defaultModuleGrants), GSI1PK=:gsi1pk, GSI1SK=:gsi1sk, toolId=:tool, environment=:environment, entityType=:memberEntity, schemaVersion=:schema, updated_at=:now, created_at=if_not_exists(created_at,:now)',
       ExpressionAttributeNames: { '#role': 'role', '#email': 'email' },
       ExpressionAttributeValues: {
         ...metadata,
@@ -148,6 +148,7 @@ export async function provisionPortalAccess(client, tableName, input) {
         ':true': true,
         ':member': 'member',
         ':memberEntity': 'member',
+        ':defaultModuleGrants': ['obrigacoes'],
         ':gsi1pk': memberIndex.GSI1PK,
         ':gsi1sk': memberIndex.GSI1SK,
       },
