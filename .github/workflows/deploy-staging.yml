@@ -386,19 +386,96 @@ jobs:
           AWS_SESSION_TOKEN: ${{ secrets.AWS_SESSION_TOKEN }}
         run: |
           set -euo pipefail
-          sam deploy \
-            --template-file template-staging-phase1.json \
-            --stack-name "$STACK_NAME" \
+
+          CHANGE_SET="phase1-record-lookup-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+
+          aws cloudformation describe-stacks \
             --region "$AWS_REGION" \
-            --s3-bucket "$SAM_ARTIFACT_BUCKET" \
-            --s3-prefix "_sam/staging/phase1" \
-            --capabilities CAPABILITY_NAMED_IAM \
-            --no-confirm-changeset \
-            --no-fail-on-empty-changeset \
-            --parameter-overrides \
-              Environment=staging \
-              ToolId=painel-obrigacoes \
-              ApiMode=HttpApi
+            --stack-name "$STACK_NAME" \
+            --output json >/tmp/phase1-stack.json
+
+          python - <<'PY' >/tmp/phase1-parameters.json
+          import json
+          data=json.load(open('/tmp/phase1-stack.json'))
+          params=data['Stacks'][0].get('Parameters', [])
+          print(json.dumps([
+              {'ParameterKey': p['ParameterKey'], 'UsePreviousValue': True}
+              for p in params
+          ]))
+          PY
+
+          TEMPLATE_SIZE="$(wc -c < template-staging-phase1.json)"
+          if [ "$TEMPLATE_SIZE" -le 50000 ]; then
+            TEMPLATE_MODE="body"
+          else
+            TEMPLATE_MODE="s3"
+            TEMPLATE_KEY="_sam/staging/phase1/template-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}.json"
+            aws s3 cp template-staging-phase1.json "s3://$SAM_ARTIFACT_BUCKET/$TEMPLATE_KEY"
+            TEMPLATE_URL="https://${SAM_ARTIFACT_BUCKET}.s3.${AWS_REGION}.amazonaws.com/${TEMPLATE_KEY}"
+          fi
+
+          if [ "$TEMPLATE_MODE" = "body" ]; then
+            aws cloudformation create-change-set \
+              --region "$AWS_REGION" \
+              --stack-name "$STACK_NAME" \
+              --change-set-name "$CHANGE_SET" \
+              --change-set-type UPDATE \
+              --template-body file://template-staging-phase1.json \
+              --parameters file:///tmp/phase1-parameters.json \
+              --capabilities CAPABILITY_NAMED_IAM CAPABILITY_AUTO_EXPAND
+          else
+            aws cloudformation create-change-set \
+              --region "$AWS_REGION" \
+              --stack-name "$STACK_NAME" \
+              --change-set-name "$CHANGE_SET" \
+              --change-set-type UPDATE \
+              --template-url "$TEMPLATE_URL" \
+              --parameters file:///tmp/phase1-parameters.json \
+              --capabilities CAPABILITY_NAMED_IAM CAPABILITY_AUTO_EXPAND
+          fi
+
+          aws cloudformation wait change-set-create-complete \
+            --region "$AWS_REGION" \
+            --stack-name "$STACK_NAME" \
+            --change-set-name "$CHANGE_SET"
+
+          aws cloudformation describe-change-set \
+            --region "$AWS_REGION" \
+            --stack-name "$STACK_NAME" \
+            --change-set-name "$CHANGE_SET" \
+            --output json >/tmp/phase1-changeset.json
+
+          python - <<'PY'
+          import json
+          data=json.load(open('/tmp/phase1-changeset.json'))
+          changes=data.get('Changes', [])
+          if not changes:
+              raise SystemExit('Change Set da fase 1 está vazio; abortando para inspeção.')
+          unexpected=[]
+          for change in changes:
+              rc=change.get('ResourceChange', {})
+              logical=rc.get('LogicalResourceId')
+              action=rc.get('Action')
+              rtype=rc.get('ResourceType')
+              print(f'Phase1 change: {action} {logical} {rtype}')
+              if logical != 'DataTable' or action != 'Modify':
+                  unexpected.append((action, logical, rtype))
+          if unexpected:
+              print('ALTERAÇÕES INESPERADAS NA FASE 1:', unexpected)
+              raise SystemExit(2)
+          print('Guardrail aprovado: fase 1 altera somente DataTable.')
+          PY
+
+          aws cloudformation execute-change-set \
+            --region "$AWS_REGION" \
+            --stack-name "$STACK_NAME" \
+            --change-set-name "$CHANGE_SET"
+
+          aws cloudformation wait stack-update-complete \
+            --region "$AWS_REGION" \
+            --stack-name "$STACK_NAME"
+
+          echo "Fase 1 do DynamoDB concluída via Change Set isolado."
         working-directory: painel-obrigacoes/aws
 
       - name: Verify phase 1 index
