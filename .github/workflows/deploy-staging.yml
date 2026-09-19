@@ -135,6 +135,31 @@ jobs:
           echo "Stack de staging confirmado: $STACK_NAME"
         working-directory: .
 
+      - name: Inspect SAM managed resources
+        env:
+          AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          AWS_SESSION_TOKEN: ${{ secrets.AWS_SESSION_TOKEN }}
+        run: |
+          set -euo pipefail
+          if aws cloudformation describe-stacks --region "$AWS_REGION" --stack-name aws-sam-cli-managed-default >/tmp/sam-managed.json 2>/dev/null; then
+            STATUS="$(python - <<'PY'
+          import json
+          data=json.load(open('/tmp/sam-managed.json'))
+          print(data['Stacks'][0]['StackStatus'])
+          PY
+          )"
+            echo "SAM managed resources status: $STATUS"
+            if [ "$STATUS" = "ROLLBACK_COMPLETE" ]; then
+              echo "Falhas do stack auxiliar:"
+              aws cloudformation describe-stack-events --region "$AWS_REGION" --stack-name aws-sam-cli-managed-default --query "StackEvents[?ResourceStatus=='CREATE_FAILED'].[LogicalResourceId,ResourceType,ResourceStatusReason]" --output table
+              exit 1
+            fi
+          else
+            echo "SAM managed resources ainda não existe; o SAM poderá criá-lo."
+          fi
+        working-directory: .
+
       - name: Deploy existing staging stack
         env:
           AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
