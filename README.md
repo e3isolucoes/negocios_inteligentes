@@ -7,9 +7,10 @@ Plataforma modular da E3I Soluções para centralizar soluções de gestão empr
 ```text
 /
 ├── index.html                       # entrada da plataforma
+├── modules/
+│   └── registry.js                  # contrato e catálogo central de módulos
 ├── platform/
-│   ├── module-registry.js           # catálogo central de módulos
-│   ├── shell.js                     # navegação e carregamento do módulo ativo
+│   ├── shell.js                     # navegação e ciclo de vida do módulo ativo
 │   └── shell.css                    # identidade visual/layout da plataforma
 ├── painel-obrigacoes/               # primeiro módulo, preservado do produto atual
 │   ├── index.html
@@ -26,13 +27,13 @@ Plataforma modular da E3I Soluções para centralizar soluções de gestão empr
 
 A barra lateral **não possui módulos hardcoded no HTML**. O catálogo é definido exclusivamente em:
 
-`platform/module-registry.js`
+`modules/registry.js`
 
 O primeiro módulo registrado é:
 
 - `obrigacoes` — Painel de Obrigações.
 
-Para incluir um novo produto na plataforma, registre seu contrato no catálogo central com `id`, nome, descrição e `entrypoint`.
+Para incluir um novo produto na plataforma, registre seu contrato no catálogo central com `id`, `name`, `area`, `requiredEntitlement`, `mount(container, context)` e `unmount(container)`.
 
 ## Compatibilidade do Painel de Obrigações
 
