@@ -2173,3 +2173,13 @@ textarea:focus-visible,
 /* Extensão canônica do negocios_inteligentes: empresas relacionadas. */
 .related-companies-tags{display:flex;flex-wrap:wrap;gap:6px;margin:8px 0 2px}
 .related-company-tag{cursor:default;white-space:normal}
+
+
+/* Modo módulo: o shell global da plataforma já fornece marca, sidebar e topbar. */
+body.embedded-module .app-frame{display:block;min-height:100vh}
+body.embedded-module .app-sidebar,
+body.embedded-module .global-header{display:none!important}
+body.embedded-module .app-workspace{min-height:100vh}
+body.embedded-module .workspace-main{width:100%;max-width:none;padding:22px 24px 40px}
+body.embedded-module .page-breadcrumb{display:none}
+body.embedded-module .foot{margin-top:18px}
