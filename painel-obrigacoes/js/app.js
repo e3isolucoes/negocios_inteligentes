@@ -30,6 +30,10 @@ function wireModalBackdrop() {
 function wireMainModuleCompatibility() {
   const app = document.getElementById('app');
   app.addEventListener('click', (event) => {
+    if (event.target.closest('[data-action="clear-filters"]')) {
+      STATE.activeModule = 'all';
+      return;
+    }
     const button = event.target.closest('[data-action="module"]');
     if (!button) return;
     STATE.view = 'board';
@@ -38,6 +42,22 @@ function wireMainModuleCompatibility() {
     render();
   });
   app.addEventListener('change', (event) => {
+    const moduleFilter = event.target.closest('select[data-action="module-filter"]');
+    if (moduleFilter) {
+      STATE.view = 'board';
+      STATE.activeModule = moduleFilter.value || 'all';
+      render();
+      return;
+    }
+
+    const filterSelect = event.target.closest('select[data-action="filter-select"]');
+    if (filterSelect) {
+      const key = filterSelect.getAttribute('data-filter');
+      if (key) STATE.filters[key] = filterSelect.value || 'all';
+      render();
+      return;
+    }
+
     const toggle = event.target.closest('input[data-action="team-module-access"]');
     if (!toggle || !isAdmin()) return;
     const profileId = toggle.getAttribute('data-id');
