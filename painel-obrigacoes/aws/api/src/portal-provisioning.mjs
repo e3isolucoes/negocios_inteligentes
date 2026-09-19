@@ -1,6 +1,7 @@
 import { createHmac, randomUUID, timingSafeEqual } from 'node:crypto';
 import { TransactWriteCommand } from '@aws-sdk/lib-dynamodb';
-import { APP_ENV, membershipPk, SCHEMA_VERSION, tenantPk, TOOL_ID } from './model.mjs';
+import { APP_ENV, SCHEMA_VERSION, tenantPk, TOOL_ID } from './model.mjs';
+import { memberIndexKeys, memberSk, workspacePk as genericWorkspacePk } from './model-generic.mjs';
 
 const MAX_CLOCK_SKEW_MS = 2 * 60 * 1000;
 const IDENTIFIER = /^[a-zA-Z0-9_-]{1,80}$/;
@@ -54,15 +55,27 @@ export async function provisionPortalAccess(client, tableName, input) {
   const timestamp = new Date().toISOString();
   const auditId = randomUUID();
   const workspacePk = tenantPk(data.workspaceId);
+  const genericPk = genericWorkspacePk(data.workspaceId);
+  const memberIndex = memberIndexKeys(data.workspaceId, data.userId);
   const metadata = { ':tool': TOOL_ID, ':environment': APP_ENV, ':schema': SCHEMA_VERSION, ':now': timestamp };
 
   await client.send(new TransactWriteCommand({ TransactItems: [
     { Update: {
       TableName: tableName,
-      Key: { PK: membershipPk(data.userId), SK: `MEMBERSHIP#${data.workspaceId}` },
-      UpdateExpression: 'SET userId=:userId, workspaceId=:workspaceId, #email=:email, active=:true, #role=if_not_exists(#role,:member), toolId=:tool, environment=:environment, entityType=:membership, schemaVersion=:schema, updated_at=:now, created_at=if_not_exists(created_at,:now)',
+      Key: { PK: genericPk, SK: memberSk(data.userId) },
+      UpdateExpression: 'SET userId=:userId, workspaceId=:workspaceId, #email=:email, active=:true, #role=if_not_exists(#role,:member), GSI1PK=:gsi1pk, GSI1SK=:gsi1sk, toolId=:tool, environment=:environment, entityType=:memberEntity, schemaVersion=:schema, updated_at=:now, created_at=if_not_exists(created_at,:now)',
       ExpressionAttributeNames: { '#role': 'role', '#email': 'email' },
-      ExpressionAttributeValues: { ...metadata, ':workspaceId': data.workspaceId, ':userId': data.userId, ':email': data.email, ':true': true, ':member': 'member', ':membership': 'membership' },
+      ExpressionAttributeValues: {
+        ...metadata,
+        ':workspaceId': data.workspaceId,
+        ':userId': data.userId,
+        ':email': data.email,
+        ':true': true,
+        ':member': 'member',
+        ':memberEntity': 'member',
+        ':gsi1pk': memberIndex.GSI1PK,
+        ':gsi1sk': memberIndex.GSI1SK,
+      },
     } },
     { Update: {
       TableName: tableName,

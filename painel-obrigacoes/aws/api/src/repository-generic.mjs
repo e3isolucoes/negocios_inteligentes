@@ -16,6 +16,7 @@ import {
   entitlementSk,
   eventSk,
   normalizeDateOnly,
+  normalizeRelatedCompanies,
   normalizeTimestamp,
   recordSk,
   relationLookupKeys,
@@ -40,6 +41,7 @@ const RESERVED_FIELDS = new Set([
   'relation_id', 'relation_type',
   'related_record_id', 'related_module_id', 'related_record_type',
   'direction', 'created_at', 'updated_at',
+  'relatedCompanies',
 ]);
 
 function safeData(value) {
@@ -209,6 +211,7 @@ export class GenericRepository {
     const timestamp = now();
     const dueDate = normalizeDateOnly(input?.dueDate);
     const payload = safeData(input?.data);
+    const relatedCompanies = normalizeRelatedCompanies(input?.data?.relatedCompanies);
     await this.requireActiveEntitlement(workspace, moduleId);
 
     const item = {
@@ -223,6 +226,7 @@ export class GenericRepository {
       schemaVersion: GENERIC_SCHEMA_VERSION,
       created_at: input?.createdAt ? normalizeTimestamp(input.createdAt) : timestamp,
       updated_at: timestamp,
+      ...(relatedCompanies !== undefined ? { relatedCompanies } : {}),
       ...(dueDate ? {
         due_date: dueDate,
         ...dueDateIndexKeys(workspace, dueDate, recordId),
@@ -280,6 +284,10 @@ export class GenericRepository {
     }
 
     const safePatch = safeData(patch.data);
+    const hasRelatedCompanies = Object.hasOwn(patch.data || {}, 'relatedCompanies');
+    const relatedCompanies = hasRelatedCompanies
+      ? normalizeRelatedCompanies(patch.data.relatedCompanies)
+      : undefined;
     const expectedVersion = Number(patch.expectedVersion ?? current.version ?? 1);
     if (expectedVersion !== Number(current.version ?? 1)) {
       throw Object.assign(new Error('O registro foi alterado por outro usuário.'), { statusCode: 409 });
@@ -295,6 +303,11 @@ export class GenericRepository {
       version: expectedVersion + 1,
       updated_at: now(),
     };
+
+    if (hasRelatedCompanies) {
+      if (relatedCompanies === undefined) delete next.relatedCompanies;
+      else next.relatedCompanies = relatedCompanies;
+    }
 
     delete next.GSIDueDatePK;
     delete next.GSIDueDateSK;

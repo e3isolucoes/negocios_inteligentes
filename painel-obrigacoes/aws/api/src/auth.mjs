@@ -1,6 +1,6 @@
 import { createRemoteJWKSet, decodeJwt, jwtVerify } from 'jose';
 import { QueryCommand } from '@aws-sdk/lib-dynamodb';
-import { membershipPk } from './model.mjs';
+import { MEMBER_INDEX, memberSk, workspacePk } from './model-generic.mjs';
 
 const jwksByIssuer = new Map();
 
@@ -29,6 +29,30 @@ function bearer(headers = {}) {
   return value.slice(7);
 }
 
+
+export function resolveWorkspaceMembership(memberships, requestedWorkspaceId) {
+  const active = (memberships || []).filter((item) => (
+    item?.active !== false
+    && item?.entityType === 'member'
+    && item?.workspaceId
+    && item?.PK === workspacePk(item.workspaceId)
+    && String(item?.SK || '').startsWith('MEMBER#')
+  ));
+  if (!active.length) {
+    throw Object.assign(new Error('Usuário sem acesso ao Painel de Obrigações.'), { statusCode: 403 });
+  }
+
+  const requested = String(requestedWorkspaceId || '').trim();
+  const membership = requested
+    ? active.find((item) => item.workspaceId === requested)
+    : active[0];
+
+  if (!membership) {
+    throw Object.assign(new Error('Acesso à empresa não concedido.'), { statusCode: 403 });
+  }
+  return membership;
+}
+
 export async function authenticate(event, documentClient, tableName) {
   const token = bearer(event.headers);
   let tokenIssuer = '';
@@ -52,16 +76,15 @@ export async function authenticate(event, documentClient, tableName) {
   const userId = payload['custom:legacy_user_id'] || payload['cognito:username'] || payload.sub;
   const result = await documentClient.send(new QueryCommand({
     TableName: tableName,
-    KeyConditionExpression: 'PK = :pk AND begins_with(SK, :sk)',
-    ExpressionAttributeValues: { ':pk': membershipPk(userId), ':sk': 'MEMBERSHIP#' },
-    ConsistentRead: true
+    IndexName: MEMBER_INDEX,
+    KeyConditionExpression: 'GSI1PK = :memberPk AND begins_with(GSI1SK, :workspacePrefix)',
+    ExpressionAttributeValues: {
+      ':memberPk': memberSk(userId),
+      ':workspacePrefix': 'WORKSPACE#',
+    },
   }));
-  const active = (result.Items || []).filter((item) => item.active !== false);
-  if (!active.length) throw Object.assign(new Error('Usuário sem acesso ao Painel de Obrigações.'), { statusCode: 403 });
-
   const requested = event.headers?.['x-workspace-id'] || event.headers?.['X-Workspace-Id'];
-  const membership = requested ? active.find((item) => item.workspaceId === requested) : active[0];
-  if (!membership) throw Object.assign(new Error('Acesso à empresa não concedido.'), { statusCode: 403 });
+  const membership = resolveWorkspaceMembership(result.Items || [], requested);
   return {
     userId,
     email: payload.email,

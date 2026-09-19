@@ -23,6 +23,13 @@ test('provisiona vínculo, perfil, empresa e auditoria sem sobrescrever papéis 
   });
   assert.deepEqual(result, { userId: 'user-1', workspaceId: 'workspace-1', role: 'member' });
   assert.equal(command.input.TransactItems.length, 4);
+  assert.deepEqual(command.input.TransactItems[0].Update.Key, {
+    PK: 'WORKSPACE#workspace-1',
+    SK: 'MEMBER#user-1',
+  });
+  assert.equal(command.input.TransactItems[0].Update.ExpressionAttributeValues[':gsi1pk'], 'MEMBER#user-1');
+  assert.equal(command.input.TransactItems[0].Update.ExpressionAttributeValues[':gsi1sk'], 'WORKSPACE#workspace-1');
+  assert.equal(command.input.TransactItems[0].Update.ExpressionAttributeValues[':memberEntity'], 'member');
   assert.match(command.input.TransactItems[0].Update.UpdateExpression, /if_not_exists\(#role,:member\)/);
   assert.match(command.input.TransactItems[1].Update.UpdateExpression, /if_not_exists\(#role,:legacyMember\)/);
   assert.equal(command.input.TransactItems[3].Put.Item.action, 'PORTAL_ACCESS_PROVISIONED');

@@ -1,0 +1,39 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://e3i.dev/contracts/record.schema.json",
+  "title": "E3I Generic Record Metadata",
+  "description": "Campos transversais opcionais aplicáveis a qualquer RECORD da plataforma.",
+  "type": "object",
+  "properties": {
+    "relatedCompanies": {
+      "type": "array",
+      "maxItems": 50,
+      "description": "Empresas apenas informativas relacionadas ao registro. Não concede membership, entitlement nem acesso ao workspace citado.",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "workspaceId",
+          "razaoSocial",
+          "cnpj"
+        ],
+        "properties": {
+          "workspaceId": {
+            "type": "string",
+            "pattern": "^[a-zA-Z0-9_-]{1,80}$"
+          },
+          "razaoSocial": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 180
+          },
+          "cnpj": {
+            "type": "string",
+            "pattern": "^[0-9]{14}$"
+          }
+        }
+      }
+    }
+  },
+  "additionalProperties": true
+}

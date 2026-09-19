@@ -27,3 +27,51 @@ test('listagem rejeita cursor adulterado', async () => {
     /Cursor inválido/
   );
 });
+
+test('atualização de perfil sincroniza role e grants no MEMBER existente', async () => {
+  const admin = {
+    workspaceId: 'empresa-a',
+    userId: 'admin-a',
+    role: 'admin',
+    email: 'admin@empresa.test',
+    moduleGrants: ['administracao'],
+  };
+  let transaction;
+  const client = {
+    send: async (command) => {
+      if (command.constructor.name === 'GetCommand') {
+        return {
+          Item: {
+            PK: 'TOOL#painel-obrigacoes#ENV#dev#WORKSPACE#empresa-a',
+            SK: 'PROFILE#user-b',
+            id: 'user-b',
+            workspace_id: 'empresa-a',
+            entityType: 'profiles',
+            role: 'membro',
+            active: true,
+            version: 1,
+          },
+        };
+      }
+      transaction = command.input;
+      return {};
+    },
+  };
+
+  const repository = new Repository(client, 'table');
+  await repository.update(admin, 'profiles', 'user-b', {
+    role: 'gestor',
+    active: true,
+    module_access: ['obrigacoes'],
+    version: 1,
+  });
+
+  const memberUpdate = transaction.TransactItems[1].Update;
+  assert.deepEqual(memberUpdate.Key, {
+    PK: 'WORKSPACE#empresa-a',
+    SK: 'MEMBER#user-b',
+  });
+  assert.equal(memberUpdate.ExpressionAttributeValues[':role'], 'manager');
+  assert.deepEqual(memberUpdate.ExpressionAttributeValues[':moduleGrants'], ['obrigacoes']);
+  assert.match(memberUpdate.ConditionExpression, /attribute_exists/);
+});

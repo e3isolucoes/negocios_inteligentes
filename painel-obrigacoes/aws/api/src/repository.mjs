@@ -1,9 +1,62 @@
 import { randomUUID } from 'node:crypto';
 import { GetCommand, QueryCommand, TransactWriteCommand } from '@aws-sdk/lib-dynamodb';
 import { entityConfig, entitySk, publicRecord, SCHEMA_VERSION, tenantPk, TOOL_ID, APP_ENV } from './model.mjs';
+import { memberIndexKeys, memberSk, workspacePk } from './model-generic.mjs';
 import { requireModuleGrant, requireRole } from './auth.mjs';
 
 const now = () => new Date().toISOString();
+
+
+function authRoleFromProfileRole(role) {
+  return ({
+    membro: 'member',
+    gestor: 'manager',
+    member: 'member',
+    manager: 'manager',
+    admin: 'admin',
+    super_admin: 'super_admin',
+  })[role] || 'member';
+}
+
+function memberSyncTransaction(tableName, workspaceId, profileId, profile, patch) {
+  const index = memberIndexKeys(workspaceId, profileId);
+  const setParts = [
+    '#role = :role',
+    'active = :active',
+    'workspaceId = :workspaceId',
+    'userId = :userId',
+    'GSI1PK = :gsi1pk',
+    'GSI1SK = :gsi1sk',
+    'entityType = :memberEntity',
+    'updated_at = :updatedAt',
+  ];
+  const values = {
+    ':role': authRoleFromProfileRole(profile.role),
+    ':active': profile.active !== false,
+    ':workspaceId': workspaceId,
+    ':userId': profileId,
+    ':gsi1pk': index.GSI1PK,
+    ':gsi1sk': index.GSI1SK,
+    ':memberEntity': 'member',
+    ':updatedAt': profile.updated_at || now(),
+  };
+
+  if (Object.hasOwn(patch || {}, 'module_access')) {
+    setParts.push('module_grants = :moduleGrants');
+    values[':moduleGrants'] = Array.isArray(profile.module_access) ? profile.module_access : [];
+  }
+
+  return {
+    Update: {
+      TableName: tableName,
+      Key: { PK: workspacePk(workspaceId), SK: memberSk(profileId) },
+      UpdateExpression: `SET ${setParts.join(', ')}`,
+      ExpressionAttributeNames: { '#role': 'role' },
+      ExpressionAttributeValues: values,
+      ConditionExpression: 'attribute_exists(PK) AND attribute_exists(SK)',
+    },
+  };
+}
 
 export class Repository {
   constructor(client, tableName) { this.client = client; this.tableName = tableName; }
@@ -75,7 +128,7 @@ export class Repository {
     const expectedVersion = Number(patch.version ?? current.version ?? 1);
     if (expectedVersion !== Number(current.version ?? 1)) throw Object.assign(new Error('O registro foi alterado por outro usuário. Atualize e tente novamente.'), { statusCode: 409 });
     const item = { ...current, ...safePatch, version: expectedVersion + 1, updated_at: now() };
-    await this.client.send(new TransactWriteCommand({ TransactItems: [
+    const transactItems = [
       { Put: {
         TableName: this.tableName,
         Item: item,
@@ -83,8 +136,12 @@ export class Repository {
         ExpressionAttributeNames: { '#version': 'version' },
         ExpressionAttributeValues: { ':expectedVersion': expectedVersion }
       } },
+      ...(entity === 'profiles'
+        ? [memberSyncTransaction(this.tableName, auth.workspaceId, id, item, patch)]
+        : []),
       { Put: { TableName: this.tableName, Item: this.auditItem(auth, 'UPDATE', entity, id, publicRecord(current), publicRecord(item)) } }
-    ] }));
+    ];
+    await this.client.send(new TransactWriteCommand({ TransactItems: transactItems }));
     return publicRecord(item);
   }
 
