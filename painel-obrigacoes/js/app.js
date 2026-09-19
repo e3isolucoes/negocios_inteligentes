@@ -5,8 +5,8 @@ import {
   completePortalSso,
 } from './api/auth.js';
 import { bootstrapPortalSession } from './api/portalAuth.js';
-import { loadAll, doChangeModuleAccess } from './data.js?v=20260903-sso-modular-v1';
-import { render } from './render.js?v=20260903-sso-modular-v1';
+import { loadAll, doChangeModuleAccess } from './data.js?v=20260919-consolidated-v1';
+import { render } from './render.js?v=20260919-consolidated-v1';
 import {
   showLogin, wireLogin, showResetPasswordScreen, wireResetPasswordScreen,
 } from './ui/login.js';
