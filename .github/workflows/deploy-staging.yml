@@ -308,8 +308,8 @@ jobs:
                   },
               })
 
-          def table_for(phase):
-              table = copy.deepcopy(deployed['DataTable'])
+          def table_for(phase, base=None):
+              table = copy.deepcopy(base if base is not None else deployed['DataTable'])
               # Preserve every deployed table property, especially StreamSpecification.
               ensure_attribute(table, 'GSIRecordPK')
               ensure_attribute(table, 'GSIRecordSK')
@@ -355,8 +355,11 @@ jobs:
               )
               return text
 
-          phase1 = copy.deepcopy(original)
-          phase1.setdefault('Resources', {})['DataTable'] = table_for(1)
+          phase1 = copy.deepcopy(processed)
+          phase1.setdefault('Resources', {})['DataTable'] = table_for(
+              1,
+              processed_resources['DataTable'],
+          )
 
           Path('painel-obrigacoes/aws/template-staging-phase1.json').write_text(
               json.dumps(phase1, indent=2)
@@ -364,7 +367,7 @@ jobs:
           Path('painel-obrigacoes/aws/template-staging-final.yaml').write_text(build(2))
 
           print('Templates de staging preparados.')
-          print('Fase 1 baseada integralmente no template Original; somente DataTable é alterado.')
+          print('Fase 1 baseada integralmente no template Processed; somente DataTable é alterado.')
           print('Recursos Deletion* preservados:', ', '.join(sorted(protected)))
           print('Preservação baseada no template Original do stack.')
           print('StreamSpecification preservado:', 'StreamSpecification' in deployed['DataTable'].get('Properties', {}))
