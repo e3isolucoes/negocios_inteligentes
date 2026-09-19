@@ -75,3 +75,41 @@ test('atualização de perfil sincroniza role e grants no MEMBER existente', asy
   assert.deepEqual(memberUpdate.ExpressionAttributeValues[':moduleGrants'], ['obrigacoes']);
   assert.match(memberUpdate.ConditionExpression, /attribute_exists/);
 });
+
+
+test('membro com grant de obrigações pode ler dados auxiliares, mas não administrar perfis', async () => {
+  const member = {
+    workspaceId: 'empresa-a',
+    userId: 'user-a',
+    role: 'member',
+    email: 'user@empresa.test',
+    moduleGrants: ['obrigacoes'],
+  };
+  const client = {
+    send: async (command) => {
+      if (command.constructor.name === 'QueryCommand') {
+        return { Items: [], LastEvaluatedKey: undefined };
+      }
+      if (command.constructor.name === 'GetCommand') {
+        return {
+          Item: {
+            PK: 'TOOL#painel-obrigacoes#ENV#dev#WORKSPACE#empresa-a',
+            SK: 'PROFILE#user-b',
+            id: 'user-b',
+            role: 'membro',
+            active: true,
+            version: 1,
+          },
+        };
+      }
+      return {};
+    },
+  };
+  const repository = new Repository(client, 'table');
+
+  await assert.doesNotReject(repository.list(member, 'profiles'));
+  await assert.rejects(
+    repository.update(member, 'profiles', 'user-b', { display_name: 'Novo nome', version: 1 }),
+    /Módulo não concedido/,
+  );
+});
