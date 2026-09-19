@@ -55,6 +55,39 @@ jobs:
         run: sam validate --lint --template-file template.yaml
         working-directory: painel-obrigacoes/aws
 
+      - name: Diagnose AWS credential shape
+        env:
+          AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          AWS_SESSION_TOKEN: ${{ secrets.AWS_SESSION_TOKEN }}
+        run: |
+          set -euo pipefail
+
+          test -n "${AWS_ACCESS_KEY_ID:-}" || { echo "AWS_ACCESS_KEY_ID ausente"; exit 1; }
+          test -n "${AWS_SECRET_ACCESS_KEY:-}" || { echo "AWS_SECRET_ACCESS_KEY ausente"; exit 1; }
+
+          case "$AWS_ACCESS_KEY_ID" in
+            AKIA*) echo "Tipo detectado: credencial IAM de longa duração (AKIA).";;
+            ASIA*) echo "Tipo detectado: credencial temporária STS/SSO (ASIA).";;
+            *) echo "Tipo detectado: prefixo de Access Key não reconhecido.";;
+          esac
+
+          if [ -n "${AWS_SESSION_TOKEN:-}" ]; then
+            echo "AWS_SESSION_TOKEN: presente."
+          else
+            echo "AWS_SESSION_TOKEN: ausente."
+          fi
+
+          if [[ "$AWS_ACCESS_KEY_ID" == ASIA* && -z "${AWS_SESSION_TOKEN:-}" ]]; then
+            echo "Credencial ASIA exige AWS_SESSION_TOKEN do mesmo conjunto."
+            exit 1
+          fi
+
+          if [[ "$AWS_ACCESS_KEY_ID" == AKIA* && -n "${AWS_SESSION_TOKEN:-}" ]]; then
+            echo "Credencial AKIA normalmente não deve ser combinada com AWS_SESSION_TOKEN. Remova o token se ele não pertencer ao mesmo conjunto."
+          fi
+        working-directory: .
+
       - name: Verify AWS credentials
         env:
           AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
