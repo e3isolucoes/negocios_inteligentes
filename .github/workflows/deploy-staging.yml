@@ -1,0 +1,157 @@
+name: Deploy AWS staging
+
+on:
+  push:
+    branches:
+      - deploy/staging
+
+permissions:
+  contents: read
+
+concurrency:
+  group: aws-staging
+  cancel-in-progress: false
+
+env:
+  AWS_REGION: sa-east-1
+  STACK_NAME: e3i-staging-painel-obrigacoes
+  EXPECTED_USER_POOL_ID: sa-east-1_cc1svByQA
+  EXPECTED_API_ID: oezgdex1li
+
+jobs:
+  deploy:
+    name: validate-and-deploy-staging
+    runs-on: ubuntu-latest
+    environment: staging
+    defaults:
+      run:
+        working-directory: painel-obrigacoes/aws/api
+    steps:
+      - name: Checkout staging candidate
+        uses: actions/checkout@v4
+
+      - name: Use Node.js 22
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Use AWS SAM CLI
+        uses: aws-actions/setup-sam@v2
+
+      - name: Install dependencies
+        run: npm install --no-audit --no-fund
+
+      - name: Run API tests
+        run: npm test
+
+      - name: Run platform tests
+        run: npm test
+        working-directory: .
+
+      - name: Build Lambda bundles
+        run: npm run build
+
+      - name: Validate SAM template
+        run: sam validate --lint --template-file template.yaml
+        working-directory: painel-obrigacoes/aws
+
+      - name: Verify AWS credentials
+        env:
+          AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          AWS_SESSION_TOKEN: ${{ secrets.AWS_SESSION_TOKEN }}
+        run: aws sts get-caller-identity
+        working-directory: .
+
+      - name: Verify existing staging stack identity
+        env:
+          AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          AWS_SESSION_TOKEN: ${{ secrets.AWS_SESSION_TOKEN }}
+        run: |
+          set -euo pipefail
+
+          aws cloudformation describe-stacks             --region "$AWS_REGION"             --stack-name "$STACK_NAME" >/tmp/stack.json
+
+          USER_POOL_ID="$(python - <<'PY'
+          import json
+          data=json.load(open('/tmp/stack.json'))
+          outputs={x['OutputKey']:x.get('OutputValue','') for x in data['Stacks'][0].get('Outputs',[])}
+          print(outputs.get('CognitoUserPoolId',''))
+          PY
+          )"
+
+          API_URL="$(python - <<'PY'
+          import json
+          data=json.load(open('/tmp/stack.json'))
+          outputs={x['OutputKey']:x.get('OutputValue','') for x in data['Stacks'][0].get('Outputs',[])}
+          print(outputs.get('ApiUrl',''))
+          PY
+          )"
+
+          test "$USER_POOL_ID" = "$EXPECTED_USER_POOL_ID" || {
+            echo "Stack recusado: UserPool inesperado: $USER_POOL_ID"
+            exit 1
+          }
+
+          echo "$API_URL" | grep -q "$EXPECTED_API_ID" || {
+            echo "Stack recusado: API inesperada: $API_URL"
+            exit 1
+          }
+
+          echo "Stack de staging confirmado: $STACK_NAME"
+        working-directory: .
+
+      - name: Deploy existing staging stack
+        env:
+          AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          AWS_SESSION_TOKEN: ${{ secrets.AWS_SESSION_TOKEN }}
+        run: |
+          set -euo pipefail
+          sam deploy             --template-file template.yaml             --stack-name "$STACK_NAME"             --region "$AWS_REGION"             --resolve-s3             --capabilities CAPABILITY_NAMED_IAM             --no-confirm-changeset             --no-fail-on-empty-changeset             --parameter-overrides               Environment=staging               ToolId=painel-obrigacoes               ApiMode=HttpApi
+        working-directory: painel-obrigacoes/aws
+
+      - name: Verify stack update
+        env:
+          AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          AWS_SESSION_TOKEN: ${{ secrets.AWS_SESSION_TOKEN }}
+        run: |
+          set -euo pipefail
+
+          STATUS="$(aws cloudformation describe-stacks             --region "$AWS_REGION"             --stack-name "$STACK_NAME"             --query 'Stacks[0].StackStatus'             --output text)"
+
+          case "$STATUS" in
+            CREATE_COMPLETE|UPDATE_COMPLETE)
+              ;;
+            *)
+              echo "Status inesperado após deploy: $STATUS"
+              exit 1
+              ;;
+          esac
+
+          PRE_TOKEN="$(aws cloudformation describe-stacks             --region "$AWS_REGION"             --stack-name "$STACK_NAME"             --query "Stacks[0].Outputs[?OutputKey=='PreTokenGenerationFunctionName'].OutputValue | [0]"             --output text)"
+
+          test -n "$PRE_TOKEN" && test "$PRE_TOKEN" != "None" || {
+            echo "Lambda Pre Token Generation não encontrada nos outputs."
+            exit 1
+          }
+
+          echo "Stack atualizado: $STATUS"
+          echo "Pre Token Generation: $PRE_TOKEN"
+        working-directory: .
+
+      - name: Unauthenticated API smoke test
+        run: |
+          set -euo pipefail
+          STATUS="$(curl -sS -o /tmp/me.json -w '%{http_code}'             https://${EXPECTED_API_ID}.execute-api.${AWS_REGION}.amazonaws.com/v1/me)"
+
+          test "$STATUS" = "401" || {
+            echo "Esperado HTTP 401 sem token; recebido: $STATUS"
+            cat /tmp/me.json
+            exit 1
+          }
+
+          echo "API respondeu 401 sem autenticação, como esperado."
+        working-directory: .
