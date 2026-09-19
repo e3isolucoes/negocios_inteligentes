@@ -127,7 +127,7 @@ test('provisiona vínculo genérico sem exigir documento cadastral', async () =>
   });
 
   assert.deepEqual(result, { userId: 'user-1', workspaceId: 'workspace-1', role: 'member' });
-  assert.equal(command.input.TransactItems.length, 4);
+  assert.equal(command.input.TransactItems.length, 5);
   assert.deepEqual(command.input.TransactItems[0].Update.Key, {
     PK: 'WORKSPACE#workspace-1',
     SK: 'MEMBER#user-1',
@@ -138,5 +138,13 @@ test('provisiona vínculo genérico sem exigir documento cadastral', async () =>
   assert.deepEqual(command.input.TransactItems[0].Update.ExpressionAttributeValues[':defaultModuleGrants'], ['obrigacoes']);
   assert.match(command.input.TransactItems[0].Update.UpdateExpression, /if_not_exists\(#role,:member\)/);
   assert.match(command.input.TransactItems[0].Update.UpdateExpression, /module_grants=if_not_exists\(module_grants,:defaultModuleGrants\)/);
-  assert.equal(command.input.TransactItems[3].Put.Item.action, 'PORTAL_ACCESS_PROVISIONED');
+  const entitlement = command.input.TransactItems[1].Update;
+  assert.deepEqual(entitlement.Key, {
+    PK: 'WORKSPACE#workspace-1',
+    SK: 'ENTITLEMENT#obrigacoes',
+  });
+  assert.equal(entitlement.ExpressionAttributeValues[':activeStatus'], 'ativo');
+  assert.equal(entitlement.ExpressionAttributeValues[':genericSchema'], 2);
+  assert.match(entitlement.UpdateExpression, /if_not_exists\(#status,:activeStatus\)/);
+  assert.equal(command.input.TransactItems[4].Put.Item.action, 'PORTAL_ACCESS_PROVISIONED');
 });
