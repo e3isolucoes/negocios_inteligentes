@@ -1,4 +1,4 @@
-import { STATE, isAdmin, isManager } from '../state.js';
+import { STATE, hasAdministrationAccess } from '../state.js';
 import { renderObligationsManage } from './manageObligations.js';
 import { renderCompaniesManage } from './manageCompanies.js';
 import { renderTeamManage } from './manageTeam.js';
@@ -11,10 +11,10 @@ import { renderCategoriesAdmin } from './categoriesAdmin.js';
 import { renderValidationAdmin } from './validationAdmin.js';
 
 function subTabsHtml() {
-  const tabs = isAdmin() ? [
+  const tabs = [
     ['obligations', 'Atividades'],
     ['companies', 'Empresas'],
-    ['team', 'Equipe'],
+    ['team', 'Equipe e acessos'],
     ['import', 'Importar planilha'],
     ['rules', 'Regras'],
     ['regimes', 'Regimes tributários'],
@@ -22,15 +22,15 @@ function subTabsHtml() {
     ['validation', 'Validação'],
     ['holidays', 'Feriados'],
     ['audit', 'Histórico'],
-  ] : [['obligations', 'Atividades']];
+  ];
   return '<div class="mgmt-subtabs">' + tabs.map(([key, label]) => (
     `<button class="tab-btn ${STATE.manageSection === key ? 'active' : ''}" data-action="manage-tab" data-section="${key}">${label}</button>`
   )).join('') + '</div>';
 }
 
 export function renderManage() {
-  if (!isManager()) {
-    return '<div class="empty">Esta área é restrita à Gestão.</div>';
+  if (!hasAdministrationAccess()) {
+    return '<div class="empty">Esta área é restrita ao Admin da Ferramenta e às pessoas autorizadas por ele.</div>';
   }
 
   let body;
