@@ -66,6 +66,10 @@ Parameters:
     Type: String
     Default: DISABLED
     AllowedValues: [ENABLED, DISABLED]
+  EntitlementScheduleState:
+    Type: String
+    Default: ENABLED
+    AllowedValues: [ENABLED, DISABLED]
 
 Conditions:
   IsProduction: !Equals [!Ref Environment, prod]
@@ -390,6 +394,88 @@ Resources:
           MaximumEventAgeInSeconds: 3600
           MaximumRetryAttempts: 2
 
+  EntitlementLifecycleFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      CodeUri: api/dist/
+      Handler: entitlements.handler
+      FunctionName: !Sub e3i-${Environment}-${ToolId}-entitlement-lifecycle
+      Role: !GetAtt EntitlementLifecycleRole.Arn
+      Timeout: 30
+
+  EntitlementLifecycleRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub e3i-${Environment}-${ToolId}-entitlement-lifecycle
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal: { Service: lambda.amazonaws.com }
+            Action: sts:AssumeRole
+      Policies:
+        - PolicyName: entitlement-lifecycle
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - dynamodb:Scan
+                  - dynamodb:UpdateItem
+                Resource: !GetAtt DataTable.Arn
+              - Effect: Allow
+                Action:
+                  - logs:CreateLogStream
+                  - logs:PutLogEvents
+                Resource: !Sub arn:${AWS::Partition}:logs:${AWS::Region}:${AWS::AccountId}:log-group:/aws/lambda/e3i-${Environment}-${ToolId}-entitlement-lifecycle:*
+              - Effect: Allow
+                Action:
+                  - xray:PutTelemetryRecords
+                  - xray:PutTraceSegments
+                Resource: '*'
+
+  EntitlementLifecycleLogGroup:
+    Type: AWS::Logs::LogGroup
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
+    Properties:
+      LogGroupName: !Sub /aws/lambda/${EntitlementLifecycleFunction}
+      RetentionInDays: 30
+
+  EntitlementLifecycleSchedulerRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub e3i-${Environment}-${ToolId}-entitlement-scheduler
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal: { Service: scheduler.amazonaws.com }
+            Action: sts:AssumeRole
+      Policies:
+        - PolicyName: invoke-entitlement-lifecycle
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action: lambda:InvokeFunction
+                Resource: !GetAtt EntitlementLifecycleFunction.Arn
+
+  EntitlementLifecycleSchedule:
+    Type: AWS::Scheduler::Schedule
+    Properties:
+      Name: !Sub e3i-${Environment}-${ToolId}-entitlements-hourly
+      Description: Suspende entitlements vencidos sem remover dados do workspace
+      State: !Ref EntitlementScheduleState
+      ScheduleExpression: rate(1 hour)
+      FlexibleTimeWindow: { Mode: 'OFF' }
+      Target:
+        Arn: !GetAtt EntitlementLifecycleFunction.Arn
+        RoleArn: !GetAtt EntitlementLifecycleSchedulerRole.Arn
+        RetryPolicy:
+          MaximumEventAgeInSeconds: 3600
+          MaximumRetryAttempts: 2
+
   ServerlessHttpApi:
     Type: AWS::Serverless::HttpApi
     Properties:
@@ -582,6 +668,8 @@ Outputs:
     Value: !Ref NotificationFunction
   NotificationScheduleName:
     Value: !Ref NotificationSchedule
+  EntitlementScheduleName:
+    Value: !Ref EntitlementLifecycleSchedule
   NotificationDkimToken1:
     Value: !GetAtt NotificationEmailIdentity.DkimDNSTokenName1
   NotificationDkimValue1:

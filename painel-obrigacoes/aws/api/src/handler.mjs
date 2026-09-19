@@ -7,12 +7,14 @@ import { createDownloadUrl, createUploadUrl, deleteStoredFile } from './files.mj
 import { provisionPortalAccess, verifyPortalProvisioning } from './portal-provisioning.mjs';
 import { consumePortalSession, createPortalSession } from './portal-session.mjs';
 import { Repository } from './repository.mjs';
+import { GenericRepository } from './repository-generic.mjs';
 import { ObrigacoesRepository } from './repository-obrigacoes.mjs';
 
 const ddb = DynamoDBDocumentClient.from(new DynamoDBClient({}), { marshallOptions: { removeUndefinedValues: true } });
 const s3 = new S3Client({});
 const cognito = new CognitoIdentityProviderClient({});
 const repository = new Repository(ddb, process.env.TABLE_NAME);
+const genericRepository = new GenericRepository(ddb, process.env.TABLE_NAME);
 const obrigacoesRepository = new ObrigacoesRepository(ddb, process.env.TABLE_NAME);
 
 function repositoryFor(entity) {
@@ -63,6 +65,24 @@ export async function handler(event) {
 
     const auth = await authenticate(event, ddb, process.env.TABLE_NAME);
     if (method === 'GET' && path === 'me') return response(200, { userId: auth.userId, email: auth.email, workspaceId: auth.workspaceId, role: auth.role, moduleGrants: auth.moduleGrants }, event);
+
+    const entitlementRoute = path.match(/^workspaces\/([^/]+)\/entitlements$/);
+    if (method === 'GET' && entitlementRoute) {
+      const workspaceId = decodeURIComponent(entitlementRoute[1]);
+      if (workspaceId !== auth.workspaceId) {
+        throw Object.assign(new Error('Acesso à empresa não concedido.'), { statusCode: 403 });
+      }
+      return response(200, {
+        workspaceId,
+        items: await genericRepository.listEntitlements(workspaceId),
+      }, event);
+    }
+
+    // O Painel atual pertence ao módulo "obrigacoes". Mesmo rotas legadas e
+    // arquivos S3 exigem contrato ativo; o papel do usuário nunca substitui
+    // o entitlement do workspace.
+    await genericRepository.requireActiveEntitlement(auth.workspaceId, 'obrigacoes');
+
     if (path === 'files/upload-url' && method === 'POST') return response(200, await createUploadUrl(s3, process.env.FILES_BUCKET, auth, parseBody(event)), event);
     if (path === 'files/download-url' && method === 'POST') return response(200, await createDownloadUrl(s3, process.env.FILES_BUCKET, auth, parseBody(event).path), event);
 

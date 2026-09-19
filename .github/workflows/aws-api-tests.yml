@@ -4,7 +4,12 @@ on:
   pull_request:
     paths:
       - 'painel-obrigacoes/aws/api/**'
+      - 'painel-obrigacoes/aws/template.yaml'
       - 'modules/obrigacoes/contracts/**'
+      - 'modules/registry.js'
+      - 'platform/**'
+      - 'index.html'
+      - 'test/**'
       - '.github/workflows/aws-api-tests.yml'
   workflow_dispatch:
 
@@ -31,6 +36,14 @@ jobs:
 
       - name: Run API test suite
         run: npm test
+
+      - name: Run platform registry tests
+        run: npm test
+        working-directory: .
+
+      - name: Check platform shell syntax
+        run: node --check platform/shell.js
+        working-directory: .
 
       - name: Build Lambda bundles
         run: npm run build

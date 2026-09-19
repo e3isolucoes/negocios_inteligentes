@@ -12,7 +12,7 @@ test('catálogo central possui somente o módulo obrigações', () => {
 });
 
 test('obrigações implementa o contrato explícito da plataforma', () => {
-  const module = getModuleById('obrigacoes');
+  const module = getModuleById('obrigacoes', { entitlements: new Set(['obrigacoes']) });
 
   assert.equal(module.id, 'obrigacoes');
   assert.equal(module.name, 'Obrigações');
@@ -33,7 +33,8 @@ test('entitlement filtra o catálogo quando o contexto de permissões é forneci
   );
 });
 
-test('sem motor de entitlements injetado preserva compatibilidade atual', () => {
-  assert.equal(getDefaultModule()?.id, 'obrigacoes');
-  assert.equal(getModuleById('inexistente'), null);
+test('sem entitlements carregados o catálogo falha fechado', () => {
+  assert.equal(getDefaultModule(), null);
+  assert.equal(getModuleById('obrigacoes'), null);
+  assert.equal(getModuleById('inexistente', { entitlements: new Set(['obrigacoes']) }), null);
 });
