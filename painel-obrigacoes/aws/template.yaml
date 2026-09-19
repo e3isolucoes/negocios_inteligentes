@@ -41,13 +41,13 @@ Parameters:
     Default: 20
     MinValue: 1
     MaxValue: 20
-    Description: RCU da tabela principal. O GSI adiciona 1 RCU; maximo efetivo deste stack = 21 RCU.
+    Description: RCU da tabela principal. Os 3 GSIs adicionam 1 RCU cada; maximo efetivo deste stack = 23 RCU.
   TableWriteCapacity:
     Type: Number
     Default: 5
     MinValue: 1
     MaxValue: 5
-    Description: WCU da tabela principal. O GSI adiciona 1 WCU; maximo efetivo deste stack = 6 WCU.
+    Description: WCU da tabela principal. Os 3 GSIs adicionam 1 WCU cada; maximo efetivo deste stack = 8 WCU.
   NotificationDomain:
     Type: String
     Default: e3isolucoes.com.br
@@ -166,6 +166,14 @@ Resources:
           AttributeType: S
         - AttributeName: GSI1SK
           AttributeType: S
+        - AttributeName: GSIRecordPK
+          AttributeType: S
+        - AttributeName: GSIRecordSK
+          AttributeType: S
+        - AttributeName: GSIDueDatePK
+          AttributeType: S
+        - AttributeName: GSIDueDateSK
+          AttributeType: S
       KeySchema:
         - AttributeName: PK
           KeyType: HASH
@@ -177,6 +185,28 @@ Resources:
             - AttributeName: GSI1PK
               KeyType: HASH
             - AttributeName: GSI1SK
+              KeyType: RANGE
+          Projection:
+            ProjectionType: ALL
+          ProvisionedThroughput:
+            ReadCapacityUnits: 1
+            WriteCapacityUnits: 1
+        - IndexName: GSI-RECORD-LOOKUP
+          KeySchema:
+            - AttributeName: GSIRecordPK
+              KeyType: HASH
+            - AttributeName: GSIRecordSK
+              KeyType: RANGE
+          Projection:
+            ProjectionType: ALL
+          ProvisionedThroughput:
+            ReadCapacityUnits: 1
+            WriteCapacityUnits: 1
+        - IndexName: GSI-DUEDATE
+          KeySchema:
+            - AttributeName: GSIDueDatePK
+              KeyType: HASH
+            - AttributeName: GSIDueDateSK
               KeyType: RANGE
           Projection:
             ProjectionType: ALL
