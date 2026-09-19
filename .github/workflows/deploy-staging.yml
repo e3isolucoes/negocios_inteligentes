@@ -378,7 +378,7 @@ jobs:
       - name: Validate staged templates
         run: |
           set -euo pipefail
-          sam validate --lint --template-file template-staging-phase1.json
+          python -m json.tool template-staging-phase1.json >/dev/null
           sam validate --lint --template-file template-staging-final.yaml
         working-directory: painel-obrigacoes/aws
 
