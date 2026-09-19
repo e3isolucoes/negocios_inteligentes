@@ -160,6 +160,46 @@ test('occurrence mantém unicidade por atividade e data e cria evidence metadata
   );
 });
 
+test('todos os papéis operacionais podem concluir atividade com grant de obrigações', async () => {
+  const client = new MemoryDocumentClient();
+  const repository = new ObrigacoesRepository(client, 'table');
+  await seedActiveEntitlement(repository);
+
+  const activity = await repository.create({
+    ...auth,
+    userId: 'setup-admin',
+    role: 'admin',
+  }, 'obligations', {
+    name: 'Fechamento mensal',
+    frequency: 'mensal',
+  });
+
+  const roles = ['member', 'manager', 'admin', 'super_admin'];
+  for (const [index, role] of roles.entries()) {
+    const actor = {
+      ...auth,
+      userId: `user-${role}`,
+      email: `${role}@empresa.test`,
+      role,
+      moduleGrants: ['obrigacoes'],
+    };
+    const day = String(index + 20).padStart(2, '0');
+    const completion = await repository.create(actor, 'completions', {
+      obligation_id: activity.id,
+      occurrence_date: `2026-09-${day}`,
+      done_by: actor.userId,
+      done_by_name: role,
+      checklist_total: 0,
+      checklist_checked: 0,
+    });
+
+    assert.equal(completion.done_by, actor.userId);
+    assert.equal(completion.occurrence_date, `2026-09-${day}`);
+  }
+
+  assert.equal(findBySk(client, 'RECORD#obrigacoes#occurrence#').length, roles.length);
+});
+
 test('checklist-item nasce desmarcado e continua editável pelo endpoint legado', async () => {
   const client = new MemoryDocumentClient();
   const repository = new ObrigacoesRepository(client, 'table');
