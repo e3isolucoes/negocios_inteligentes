@@ -355,10 +355,16 @@ jobs:
               )
               return text
 
-          Path('painel-obrigacoes/aws/template-staging-phase1.yaml').write_text(build(1))
+          phase1 = copy.deepcopy(original)
+          phase1.setdefault('Resources', {})['DataTable'] = table_for(1)
+
+          Path('painel-obrigacoes/aws/template-staging-phase1.json').write_text(
+              json.dumps(phase1, indent=2)
+          )
           Path('painel-obrigacoes/aws/template-staging-final.yaml').write_text(build(2))
 
           print('Templates de staging preparados.')
+          print('Fase 1 baseada integralmente no template Original; somente DataTable é alterado.')
           print('Recursos Deletion* preservados:', ', '.join(sorted(protected)))
           print('Preservação baseada no template Original do stack.')
           print('StreamSpecification preservado:', 'StreamSpecification' in deployed['DataTable'].get('Properties', {}))
@@ -369,7 +375,7 @@ jobs:
       - name: Validate staged templates
         run: |
           set -euo pipefail
-          sam validate --lint --template-file template-staging-phase1.yaml
+          sam validate --lint --template-file template-staging-phase1.json
           sam validate --lint --template-file template-staging-final.yaml
         working-directory: painel-obrigacoes/aws
 
@@ -381,7 +387,7 @@ jobs:
         run: |
           set -euo pipefail
           sam deploy \
-            --template-file template-staging-phase1.yaml \
+            --template-file template-staging-phase1.json \
             --stack-name "$STACK_NAME" \
             --region "$AWS_REGION" \
             --s3-bucket "$SAM_ARTIFACT_BUCKET" \
