@@ -2,7 +2,7 @@ import { STATE, isAdmin, isManager, isSuperUser, activeOccurrences } from './sta
 import { escapeHtml, deltaLabel } from './dateUtils.js';
 import { renderToolbar, renderSidebarNavigation } from './ui/toolbar.js';
 import { selecionarVisaoExecutiva } from './ui/executiveView.js';
-import { openModal, closeModal } from './ui/modal.js?v=20260814-access-roles-v1';
+import { openModal, closeModal } from './ui/modal.js?v=20260919-consolidated-v1';
 import { openRuleModal } from './ui/ruleModal.js';
 import {
   doMarkDone, doUndoLast, doDeleteObligation, loadAll,
@@ -12,7 +12,7 @@ import {
   doOpenRegimeDialog, doDeleteTaxRegime, doOpenRegimeRulesDialog, doOpenRegimeCompaniesDialog,
   doApplyRegimeToCompany, doToggleChecklistItem,
   doCreateWorkspace, doUpdateWorkspaceAccess,
-} from './data.js?v=20260830-modular-v1';
+} from './data.js?v=20260919-consolidated-v1';
 import { signOut } from './api/auth.js';
 import { parseCsvFile, validateImportRows, downloadCsvTemplate } from './csv.js';
 import { getAttachmentUrl } from './api/storage.js';
