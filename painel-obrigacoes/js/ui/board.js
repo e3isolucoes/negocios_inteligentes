@@ -5,6 +5,7 @@ import { catInfo, moduleInfo, FREQ_LABELS, priorityInfo } from '../constants.js'
 import {
   fmtBR, deltaLabel, escapeHtml, checklistProgressLabel,
 } from '../dateUtils.js';
+import { renderRelatedCompaniesTags } from './relatedCompanies.js';
 
 function renderAtAGlance(items, onlyMine) {
   const urgent = items.filter((it) => it.status.tone === 'red' || it.status.tone === 'amber').length;
@@ -105,6 +106,7 @@ function renderCard(it) {
       + `<span class="status-pill tone-${st.tone}">${st.label}</span>`
     + '</div>'
     + `<h3 class="card-title">${escapeHtml(ob.name)}</h3>`
+    + renderRelatedCompaniesTags(ob)
     + deadlineHtml
     + '<span class="card-open-label"><span class="when-closed">Abrir obrigação</span><span class="when-open">Fechar obrigação</span><span aria-hidden="true">⌄</span></span>'
     + '</summary>'

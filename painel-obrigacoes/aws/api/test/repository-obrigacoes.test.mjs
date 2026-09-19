@@ -80,9 +80,20 @@ function findBySk(client, skPrefix) {
   return [...client.items.values()].filter((item) => item.SK.startsWith(skPrefix));
 }
 
+async function seedActiveEntitlement(repository, workspaceId = 'empresa-a') {
+  await repository.generic.putEntitlement(workspaceId, {
+    moduleId: 'obrigacoes',
+    plan: 'standard',
+    status: 'ativo',
+    startedAt: '2026-09-01T00:00:00Z',
+    renewsAt: '2026-10-01T00:00:00Z',
+  });
+}
+
 test('obligations mantém contrato HTTP legado e persiste como activity genérica', async () => {
   const client = new MemoryDocumentClient();
   const repository = new ObrigacoesRepository(client, 'table');
+  await seedActiveEntitlement(repository);
 
   const created = await repository.create(auth, 'obligations', {
     name: 'DCTFWeb',
@@ -111,6 +122,7 @@ test('obligations mantém contrato HTTP legado e persiste como activity genéric
 test('occurrence mantém unicidade por atividade e data e cria evidence metadata no DynamoDB', async () => {
   const client = new MemoryDocumentClient();
   const repository = new ObrigacoesRepository(client, 'table');
+  await seedActiveEntitlement(repository);
   const activity = await repository.create(auth, 'obligations', {
     name: 'EFD',
     frequency: 'mensal',
@@ -151,6 +163,7 @@ test('occurrence mantém unicidade por atividade e data e cria evidence metadata
 test('checklist-item nasce desmarcado e continua editável pelo endpoint legado', async () => {
   const client = new MemoryDocumentClient();
   const repository = new ObrigacoesRepository(client, 'table');
+  await seedActiveEntitlement(repository);
   const activity = await repository.create(auth, 'obligations', {
     name: 'Fechamento',
     frequency: 'mensal',
@@ -179,6 +192,8 @@ test('checklist-item nasce desmarcado e continua editável pelo endpoint legado'
 test('occurrence e checklist não podem apontar para activity de outro workspace', async () => {
   const client = new MemoryDocumentClient();
   const repository = new ObrigacoesRepository(client, 'table');
+  await seedActiveEntitlement(repository);
+  await seedActiveEntitlement(repository, 'empresa-b');
 
   const otherAuth = { ...auth, workspaceId: 'empresa-b' };
   const otherActivity = await repository.create(otherAuth, 'obligations', {
@@ -207,6 +222,7 @@ test('occurrence e checklist não podem apontar para activity de outro workspace
 test('list retorna os mesmos campos usados pelo frontend, sem metadados internos', async () => {
   const client = new MemoryDocumentClient();
   const repository = new ObrigacoesRepository(client, 'table');
+  await seedActiveEntitlement(repository);
   await repository.create(auth, 'obligations', {
     name: 'DIRF',
     frequency: 'anual',
@@ -226,6 +242,7 @@ test('list retorna os mesmos campos usados pelo frontend, sem metadados internos
 test('excluir activity remove occurrence, checklist-item e evidence do mesmo workspace', async () => {
   const client = new MemoryDocumentClient();
   const repository = new ObrigacoesRepository(client, 'table');
+  await seedActiveEntitlement(repository);
   const activity = await repository.create(auth, 'obligations', {
     name: 'Apuração',
     frequency: 'mensal',
@@ -249,4 +266,38 @@ test('excluir activity remove occurrence, checklist-item e evidence do mesmo wor
   assert.equal(findBySk(client, 'RECORD#obrigacoes#occurrence#').length, 0);
   assert.equal(findBySk(client, 'RECORD#obrigacoes#checklist-item#').length, 0);
   assert.equal(findBySk(client, 'RECORD#obrigacoes#evidence#').length, 0);
+});
+
+test('admin sem entitlement do módulo recebe 403', async () => {
+  const client = new MemoryDocumentClient();
+  const repository = new ObrigacoesRepository(client, 'table');
+  const admin = {
+    ...auth,
+    role: 'admin',
+    moduleGrants: ['obrigacoes'],
+  };
+
+  await assert.rejects(
+    repository.create(admin, 'obligations', {
+      name: 'Bloqueada',
+      frequency: 'mensal',
+    }),
+    (error) => error.statusCode === 403,
+  );
+
+  assert.equal(findBySk(client, 'RECORD#obrigacoes#activity#').length, 0);
+});
+
+test('usuário comum com entitlement ativo opera dentro do papel permitido', async () => {
+  const client = new MemoryDocumentClient();
+  const repository = new ObrigacoesRepository(client, 'table');
+  await seedActiveEntitlement(repository);
+
+  const created = await repository.create(auth, 'obligations', {
+    name: 'Permitida',
+    frequency: 'mensal',
+  });
+
+  assert.equal(created.name, 'Permitida');
+  assert.equal(findBySk(client, 'RECORD#obrigacoes#activity#').length, 1);
 });

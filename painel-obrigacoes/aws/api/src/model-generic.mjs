@@ -44,6 +44,45 @@ export function normalizeTimestamp(value = new Date().toISOString()) {
   return parsed.toISOString();
 }
 
+
+export function normalizeRelatedCompanies(value) {
+  if (value === undefined || value === null) return undefined;
+  if (!Array.isArray(value)) {
+    throw Object.assign(new Error('relatedCompanies deve ser uma lista.'), { statusCode: 400 });
+  }
+  if (value.length > 50) {
+    throw Object.assign(new Error('relatedCompanies excede o limite de 50 empresas.'), { statusCode: 400 });
+  }
+
+  const seen = new Set();
+  return value.map((entry) => {
+    if (!entry || typeof entry !== 'object' || Array.isArray(entry)) {
+      throw Object.assign(new Error('Empresa relacionada inválida.'), { statusCode: 400 });
+    }
+
+    const workspaceId = assertWorkspaceId(entry.workspaceId);
+    const razaoSocial = String(entry.razaoSocial || '').trim();
+    const cnpj = String(entry.cnpj || '').replace(/\D/g, '');
+
+    if (!razaoSocial || razaoSocial.length > 180) {
+      throw Object.assign(new Error('razaoSocial inválida em relatedCompanies.'), { statusCode: 400 });
+    }
+    if (cnpj.length !== 14) {
+      throw Object.assign(new Error('cnpj inválido em relatedCompanies.'), { statusCode: 400 });
+    }
+    if (seen.has(workspaceId)) {
+      throw Object.assign(new Error('workspaceId duplicado em relatedCompanies.'), { statusCode: 400 });
+    }
+    seen.add(workspaceId);
+
+    return {
+      workspaceId,
+      razaoSocial,
+      cnpj,
+    };
+  });
+}
+
 export function workspacePk(workspaceId) {
   return `WORKSPACE#${assertWorkspaceId(workspaceId)}`;
 }
