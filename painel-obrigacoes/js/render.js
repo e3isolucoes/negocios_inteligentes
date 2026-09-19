@@ -1,8 +1,8 @@
-import { STATE, isAdmin, isManager, isSuperUser, activeOccurrences } from './state.js';
+import { STATE, isAdmin, isManager, isSuperUser, canWriteObligations, activeOccurrences } from './state.js';
 import { escapeHtml, deltaLabel } from './dateUtils.js';
-import { renderToolbar } from './ui/toolbar.js';
+import { renderToolbar, renderSidebarNavigation } from './ui/toolbar.js';
 import { selecionarVisaoExecutiva } from './ui/executiveView.js';
-import { openModal, closeModal } from './ui/modal.js?v=20260814-access-roles-v1';
+import { openModal, closeModal } from './ui/modal.js?v=20260919-design-system-v2';
 import { openRuleModal } from './ui/ruleModal.js';
 import {
   doMarkDone, doUndoLast, doDeleteObligation, loadAll,
@@ -12,7 +12,7 @@ import {
   doOpenRegimeDialog, doDeleteTaxRegime, doOpenRegimeRulesDialog, doOpenRegimeCompaniesDialog,
   doApplyRegimeToCompany, doToggleChecklistItem,
   doCreateWorkspace, doUpdateWorkspaceAccess,
-} from './data.js?v=20260830-modular-v1';
+} from './data.js?v=20260919-design-system-v2';
 import { signOut } from './api/auth.js';
 import { parseCsvFile, validateImportRows, downloadCsvTemplate } from './csv.js';
 import { getAttachmentUrl } from './api/storage.js';
@@ -61,55 +61,123 @@ function renderNotificationBell() {
   let listHtml = '';
 
   if (rejected) {
-    listHtml += '<div class="dd-item" data-action="tab" data-tab="validacoes" style="white-space:normal;">'
-      + `<span class="status-pill tone-red" style="margin-right:6px;">Devolvida</span>`
+    listHtml += '<div class="dd-item dd-item-wrap" data-action="tab" data-tab="validacoes">'
+      + `<span class="status-pill tone-red dd-status-leading">Devolvida</span>`
       + `${rejected} tarefa(s) voltaram para você corrigir`
       + '</div>';
   }
   if (pendingValidation) {
-    listHtml += '<div class="dd-item" data-action="tab" data-tab="validacoes" style="white-space:normal;">'
-      + `<span class="status-pill tone-amber" style="margin-right:6px;">Validar</span>`
+    listHtml += '<div class="dd-item dd-item-wrap" data-action="tab" data-tab="validacoes">'
+      + `<span class="status-pill tone-amber dd-status-leading">Validar</span>`
       + `${pendingValidation} tarefa(s) aguardando sua validação`
       + '</div>';
   }
 
   listHtml += items.length
     ? items.slice(0, 8).map(({ ob, status }) => (
-      '<div class="dd-item" style="white-space:normal;cursor:default;">'
-        + `<span class="status-pill tone-${status.tone}" style="margin-right:6px;">${escapeHtml(status.label)}</span>`
+      '<div class="dd-item dd-item-static">'
+        + `<span class="status-pill tone-${status.tone} dd-status-leading">${escapeHtml(status.label)}</span>`
         + `${escapeHtml(ob.name)} — ${deltaLabel(status.diffDays)}`
       + '</div>'
     )).join('')
-    : (count ? '' : '<div class="dd-item" style="white-space:normal;cursor:default;">Nenhuma pendência sua atrasada ou vencendo em breve.</div>');
+    : (count ? '' : '<div class="dd-item dd-item-static">Nenhuma pendência sua atrasada ou vencendo em breve.</div>');
 
   return '<div class="dd" data-dd-root="notifications">'
     + '<button type="button" class="dd-btn" data-action="dd-toggle" data-dd="notifications" aria-label="Notificações" title="Suas obrigações atrasadas, vencendo em breve ou aguardando validação">'
       + `🔔${count ? ` <span class="status-pill tone-red">${count}</span>` : ''}`
     + '</button>'
-    + '<div class="dd-panel hidden" data-dd-panel="notifications" style="left:auto;right:0;">'
+    + '<div class="dd-panel dd-panel-right hidden" data-dd-panel="notifications">'
       + listHtml
-      + (items.length ? '<div class="dd-item" data-action="tab" data-tab="mine" style="font-weight:700;text-align:center;">Ver Minhas obrigações →</div>' : '')
+      + (items.length ? '<div class="dd-item dd-item-cta" data-action="tab" data-tab="mine">Ver Minhas obrigações →</div>' : '')
     + '</div>'
   + '</div>';
 }
 
-function bodyForView() {
-  return resolveView(STATE.view).render();
+function currentWorkspaceLabel() {
+  const selectedCompanyId = STATE.filters?.empresa && STATE.filters.empresa !== 'all' ? STATE.filters.empresa : null;
+  const selectedCompany = selectedCompanyId ? STATE.companies.find((company) => company.id === selectedCompanyId) : null;
+  if (selectedCompany?.name) return selectedCompany.name;
+  if (STATE.companies.length === 1) return STATE.companies[0].name;
+  return 'Todas as empresas';
+}
+
+function currentRoleLabel() {
+  if (isSuperUser()) return 'Superusuário';
+  if (isAdmin()) return 'Admin da Ferramenta';
+  if (isManager()) return 'Gestor';
+  return 'Membro';
+}
+
+function viewMeta() {
+  const map = {
+    board: ['Compliance e Prazos', 'Painel de Obrigações', 'Acompanhe prazos, status e responsáveis em um só lugar.'],
+    mine: ['Minha operação', 'Minhas atividades', 'Priorize o que está sob sua responsabilidade.'],
+    validacoes: ['Governança', 'Validações', 'Revise entregas e mantenha a qualidade do processo.'],
+    reports: ['Inteligência operacional', 'Relatórios', 'Analise desempenho, riscos e tendências da operação.'],
+    dashboard: ['Visão executiva', 'Central de Gestão', 'Acompanhe a saúde da operação e os principais pontos de atenção.'],
+    manage: ['Configuração', 'Administração', 'Gerencie acessos, empresas, regras e estrutura da ferramenta.'],
+    'system-admin': ['Plataforma', 'Administração do sistema', 'Gerencie workspaces e configurações globais da plataforma.'],
+  };
+  const [eyebrow, title, subtitle] = map[STATE.view] || map.board;
+  return { eyebrow, title, subtitle };
+}
+
+function todayLabel() {
+  return new Intl.DateTimeFormat('pt-BR', { weekday: 'long', day: '2-digit', month: 'long', year: 'numeric' })
+    .format(new Date())
+    .replace(/^./, (char) => char.toUpperCase());
+}
+
+function bodyForView(view) {
+  if (!view || typeof view.render !== 'function') {
+    console.error('Falha ao resolver a visualização atual', { view: STATE.view });
+    return '<div class="empty" role="alert">Não foi possível abrir esta área. Volte ao painel principal e tente novamente.</div>';
+  }
+  return view.render();
 }
 
 export function render() {
   const app = document.getElementById('app');
-  const body = bodyForView();
-  const roleLabel = isSuperUser() ? 'Superusuário' : (isAdmin() ? 'Admin' : (isManager() ? 'Gestor' : 'Membro'));
+  if (!app) {
+    console.error('Elemento raiz #app não encontrado.');
+    return;
+  }
+  const view = resolveView(STATE.view);
+  const body = bodyForView(view);
+  const meta = viewMeta();
+  const userName = STATE.profile?.display_name || STATE.session?.email || 'Usuário';
+  const initial = String(userName).trim().charAt(0).toUpperCase() || 'U';
+  const roleLabel = currentRoleLabel();
+  const workspaceLabel = currentWorkspaceLabel();
 
-  app.innerHTML = '<header class="topbar">'
-    + '<div class="brand"><img class="app-brand-logo" src="icons/e3l-solucoes.svg" alt="E3I Soluções"><div><span class="product-name">E3I Soluções</span><h1>Painel de Obrigações</h1><p class="sub">Controladoria · acompanhamento compartilhado da equipe</p></div></div>'
-    + `<div class="who-am-i">${renderNotificationBell()}<span class="user-avatar" aria-hidden="true">${escapeHtml((STATE.profile?.display_name || STATE.session?.email || 'U').trim().charAt(0).toUpperCase())}</span><span class="user-copy"><span class="email">${escapeHtml(STATE.profile?.display_name || STATE.session?.email || '')}</span><span class="role-badge ${isManager() ? 'admin' : ''}">${roleLabel}</span></span><button class="logout-btn" id="logoutBtn" type="button" aria-label="Sair da conta">Sair</button></div>`
-    + '</header>'
-    + renderConnBanner()
-    + renderToolbar()
-    + `<section class="board">${body}</section>`
-    + '<footer class="foot"><p>Painel compartilhado — visível à equipe autenticada. Dados salvos automaticamente.</p></footer>';
+  app.innerHTML = '<div class="app-frame">'
+    + '<aside class="app-sidebar">'
+      + '<div class="sidebar-brand"><img src="icons/e3l-solucoes.svg" alt="E3I Soluções"><span>E3I</span></div>'
+      + renderSidebarNavigation()
+      + '<div class="sidebar-spacer"></div>'
+      + '<a class="side-nav-item sidebar-help" href="mailto:suporte@e3isolucoes.com.br"><span class="side-nav-icon">?</span><span class="side-nav-label">Ajuda e suporte</span></a>'
+      + '<div class="sidebar-signature"><strong>E3I Soluções</strong><span>Compliance que impulsiona negócios</span></div>'
+    + '</aside>'
+    + '<div class="app-workspace">'
+      + '<header class="global-header">'
+        + `<div class="workspace-context"><span>Empresa atual</span><strong>${escapeHtml(workspaceLabel)}</strong></div>`
+        + '<div class="global-header-spacer"></div>'
+        + renderNotificationBell()
+        + `<div class="account-summary"><span class="user-avatar" aria-hidden="true">${escapeHtml(initial)}</span><span class="account-copy"><strong>${escapeHtml(userName)}</strong><small>${escapeHtml(roleLabel)}</small></span></div>`
+        + '<button class="icon-action logout-btn" id="logoutBtn" type="button" aria-label="Sair da conta" title="Sair">↪</button>'
+      + '</header>'
+      + '<main class="workspace-main">'
+        + renderConnBanner()
+        + '<section class="page-heading">'
+          + `<div><p class="page-breadcrumb">${escapeHtml(meta.eyebrow)} <span>›</span> ${escapeHtml(meta.title)}</p><h1>${escapeHtml(meta.title)}</h1><p class="page-subtitle">${escapeHtml(meta.subtitle)}</p></div>`
+          + `<div class="page-heading-actions"><span class="today-label">${escapeHtml(todayLabel())}</span><button type="button" class="btn-secondary refresh-btn" data-action="refresh-data">↻ Atualizar</button></div>`
+        + '</section>'
+        + renderToolbar()
+        + `<section class="board">${body}</section>`
+        + '<footer class="foot"><p>Dados salvos automaticamente · acesso conforme seu perfil e empresa.</p></footer>'
+      + '</main>'
+    + '</div>'
+  + '</div>';
 
   document.getElementById('logoutBtn').addEventListener('click', () => signOut());
 
@@ -119,7 +187,7 @@ export function render() {
   // Precisa vir depois do innerHTML: o módulo desenha dentro do container e
   // registra os próprios cliques. Como render() recria o innerHTML inteiro, a
   // fila é remontada a cada render — por isso a chamada fica aqui, e não no boot.
-  resolveView(STATE.view).mount?.();
+  view?.mount?.();
 
   if (!appClickBound) {
     app.addEventListener('click', onAppClick);
@@ -169,6 +237,14 @@ function onAppClick(e) {
   if (!e.target.closest('.dd')) {
     app.querySelectorAll('.dd-panel').forEach((p) => p.classList.add('hidden'));
     app.querySelectorAll('[data-action="dd-toggle"]').forEach((toggle) => toggle.setAttribute('aria-expanded', 'false'));
+  }
+
+  const refresh = e.target.closest('[data-action="refresh-data"]');
+  if (refresh) {
+    refresh.setAttribute('aria-busy', 'true');
+    refresh.disabled = true;
+    loadAll().then(render).catch(() => render());
+    return;
   }
 
   const banner = e.target.closest('[data-action="retry-load"]');
@@ -239,11 +315,11 @@ function onAppClick(e) {
     doUpdateWorkspaceAccess(id, btn.getAttribute('data-status'), render);
     return;
   }
-  if (action === 'new') { openModal(null, { onSaved: render }); return; }
-  if (action === 'edit') { if (isManager()) openModal(id, { onSaved: render }); return; }
+  if (action === 'new') { if (canWriteObligations()) openModal(null, { onSaved: render }); return; }
+  if (action === 'edit') { if (canWriteObligations()) openModal(id, { onSaved: render }); return; }
   if (action === 'done') { doMarkDone(id, render); return; }
   if (action === 'undo') { doUndoLast(id, render); return; }
-  if (action === 'delete') { if (isManager()) doDeleteObligation(id, render); return; }
+  if (action === 'delete') { if (canWriteObligations()) doDeleteObligation(id, render); return; }
   if (action === 'close') { closeModal(); return; }
 
   if (action === 'manage-tab') {
