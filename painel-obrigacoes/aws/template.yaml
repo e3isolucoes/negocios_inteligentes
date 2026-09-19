@@ -41,13 +41,13 @@ Parameters:
     Default: 20
     MinValue: 1
     MaxValue: 20
-    Description: RCU da tabela principal. O GSI adiciona 1 RCU; maximo efetivo deste stack = 21 RCU.
+    Description: RCU da tabela principal. Os 3 GSIs adicionam 1 RCU cada; maximo efetivo deste stack = 23 RCU.
   TableWriteCapacity:
     Type: Number
     Default: 5
     MinValue: 1
     MaxValue: 5
-    Description: WCU da tabela principal. O GSI adiciona 1 WCU; maximo efetivo deste stack = 6 WCU.
+    Description: WCU da tabela principal. Os 3 GSIs adicionam 1 WCU cada; maximo efetivo deste stack = 8 WCU.
   NotificationDomain:
     Type: String
     Default: e3isolucoes.com.br
@@ -66,6 +66,10 @@ Parameters:
     Type: String
     Default: DISABLED
     AllowedValues: [ENABLED, DISABLED]
+  EntitlementScheduleState:
+    Type: String
+    Default: ENABLED
+    AllowedValues: [ENABLED, DISABLED]
 
 Conditions:
   IsProduction: !Equals [!Ref Environment, prod]
@@ -78,19 +82,6 @@ Globals:
     MemorySize: 256
     Timeout: 15
     Tracing: Active
-    Environment:
-      Variables:
-        TABLE_NAME: !Ref DataTable
-        FILES_BUCKET: !Ref FilesBucket
-        APP_ENV: !Ref Environment
-        TOOL_ID: !Ref ToolId
-        AUTH_ISSUER: !Sub https://cognito-idp.${AWS::Region}.${AWS::URLSuffix}/${UserPool}
-        AUTH_AUDIENCE: !Ref UserPoolClient
-        USER_POOL_ID: !Ref UserPool
-        USER_POOL_CLIENT_ID: !Ref UserPoolClient
-        SUPABASE_ISSUER: !Ref SupabaseIssuer
-        PORTAL_PROVISIONING_SECRET: !Ref PortalProvisioningSecret
-        ALLOWED_ORIGINS: !Join [',', [!Ref AllowedOrigin, !Ref PreviewOrigin]]
 
 Resources:
   UserPool:
@@ -107,6 +98,12 @@ Resources:
           StringAttributeConstraints:
             MinLength: '1'
             MaxLength: '64'
+        - Name: active_workspace_id
+          AttributeDataType: String
+          Mutable: true
+          StringAttributeConstraints:
+            MinLength: '1'
+            MaxLength: '80'
       AutoVerifiedAttributes: [email]
       AccountRecoverySetting:
         RecoveryMechanisms:
@@ -126,6 +123,11 @@ Resources:
           TemporaryPasswordValidityDays: 7
       UserAttributeUpdateSettings:
         AttributesRequireVerificationBeforeUpdate: [email]
+      LambdaConfig:
+        PreTokenGeneration: !GetAtt PreTokenGenerationFunction.Arn
+        PreTokenGenerationConfig:
+          LambdaArn: !GetAtt PreTokenGenerationFunction.Arn
+          LambdaVersion: V1_0
       UserPoolTags:
         e3i:tool: !Ref ToolId
         e3i:environment: !Ref Environment
@@ -166,6 +168,14 @@ Resources:
           AttributeType: S
         - AttributeName: GSI1SK
           AttributeType: S
+        - AttributeName: GSIRecordPK
+          AttributeType: S
+        - AttributeName: GSIRecordSK
+          AttributeType: S
+        - AttributeName: GSIDueDatePK
+          AttributeType: S
+        - AttributeName: GSIDueDateSK
+          AttributeType: S
       KeySchema:
         - AttributeName: PK
           KeyType: HASH
@@ -177,6 +187,28 @@ Resources:
             - AttributeName: GSI1PK
               KeyType: HASH
             - AttributeName: GSI1SK
+              KeyType: RANGE
+          Projection:
+            ProjectionType: ALL
+          ProvisionedThroughput:
+            ReadCapacityUnits: 1
+            WriteCapacityUnits: 1
+        - IndexName: GSI-RECORD-LOOKUP
+          KeySchema:
+            - AttributeName: GSIRecordPK
+              KeyType: HASH
+            - AttributeName: GSIRecordSK
+              KeyType: RANGE
+          Projection:
+            ProjectionType: ALL
+          ProvisionedThroughput:
+            ReadCapacityUnits: 1
+            WriteCapacityUnits: 1
+        - IndexName: GSI-DUEDATE
+          KeySchema:
+            - AttributeName: GSIDueDatePK
+              KeyType: HASH
+            - AttributeName: GSIDueDateSK
               KeyType: RANGE
           Projection:
             ProjectionType: ALL
@@ -233,6 +265,19 @@ Resources:
       Handler: handler.handler
       FunctionName: !Sub e3i-${Environment}-${ToolId}-api
       Role: !GetAtt ApiExecutionRole.Arn
+      Environment:
+        Variables:
+          TABLE_NAME: !Ref DataTable
+          FILES_BUCKET: !Ref FilesBucket
+          APP_ENV: !Ref Environment
+          TOOL_ID: !Ref ToolId
+          AUTH_ISSUER: !Sub https://cognito-idp.${AWS::Region}.${AWS::URLSuffix}/${UserPool}
+          AUTH_AUDIENCE: !Ref UserPoolClient
+          USER_POOL_ID: !Ref UserPool
+          USER_POOL_CLIENT_ID: !Ref UserPoolClient
+          SUPABASE_ISSUER: !Ref SupabaseIssuer
+          PORTAL_PROVISIONING_SECRET: !Ref PortalProvisioningSecret
+          ALLOWED_ORIGINS: !Join [',', [!Ref AllowedOrigin, !Ref PreviewOrigin]]
       Events:
         Proxy:
           Type: HttpApi
@@ -267,6 +312,69 @@ Resources:
       FunctionName: !Ref ApiFunction
       InvokedViaFunctionUrl: true
       Principal: '*'
+
+  PreTokenGenerationFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      CodeUri: api/dist/
+      Handler: pre-token-generation.handler
+      FunctionName: !Sub e3i-${Environment}-${ToolId}-pre-token
+      Role: !GetAtt PreTokenGenerationRole.Arn
+      Timeout: 10
+      Environment:
+        Variables:
+          TABLE_NAME: !Ref DataTable
+
+  PreTokenGenerationRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub e3i-${Environment}-${ToolId}-pre-token
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal: { Service: lambda.amazonaws.com }
+            Action: sts:AssumeRole
+      Policies:
+        - PolicyName: pre-token-member-lookup
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - dynamodb:GetItem
+                Resource: !GetAtt DataTable.Arn
+              - Effect: Allow
+                Action:
+                  - dynamodb:Query
+                Resource:
+                  - !Sub ${DataTable.Arn}/index/GSI1
+              - Effect: Allow
+                Action:
+                  - logs:CreateLogStream
+                  - logs:PutLogEvents
+                Resource: !Sub arn:${AWS::Partition}:logs:${AWS::Region}:${AWS::AccountId}:log-group:/aws/lambda/e3i-${Environment}-${ToolId}-pre-token:*
+              - Effect: Allow
+                Action:
+                  - xray:PutTelemetryRecords
+                  - xray:PutTraceSegments
+                Resource: '*'
+
+  PreTokenGenerationLogGroup:
+    Type: AWS::Logs::LogGroup
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
+    Properties:
+      LogGroupName: !Sub /aws/lambda/${PreTokenGenerationFunction}
+      RetentionInDays: 30
+
+  PreTokenGenerationInvokePermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      Action: lambda:InvokeFunction
+      FunctionName: !Ref PreTokenGenerationFunction
+      Principal: cognito-idp.amazonaws.com
+      SourceArn: !GetAtt UserPool.Arn
 
   NotificationEmailIdentity:
     Type: AWS::SES::EmailIdentity
@@ -360,12 +468,98 @@ Resources:
           MaximumEventAgeInSeconds: 3600
           MaximumRetryAttempts: 2
 
+  EntitlementLifecycleFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      CodeUri: api/dist/
+      Handler: entitlements.handler
+      FunctionName: !Sub e3i-${Environment}-${ToolId}-entitlement-lifecycle
+      Role: !GetAtt EntitlementLifecycleRole.Arn
+      Timeout: 30
+      Environment:
+        Variables:
+          TABLE_NAME: !Ref DataTable
+
+  EntitlementLifecycleRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub e3i-${Environment}-${ToolId}-entitlement-lifecycle
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal: { Service: lambda.amazonaws.com }
+            Action: sts:AssumeRole
+      Policies:
+        - PolicyName: entitlement-lifecycle
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - dynamodb:Scan
+                  - dynamodb:UpdateItem
+                Resource: !GetAtt DataTable.Arn
+              - Effect: Allow
+                Action:
+                  - logs:CreateLogStream
+                  - logs:PutLogEvents
+                Resource: !Sub arn:${AWS::Partition}:logs:${AWS::Region}:${AWS::AccountId}:log-group:/aws/lambda/e3i-${Environment}-${ToolId}-entitlement-lifecycle:*
+              - Effect: Allow
+                Action:
+                  - xray:PutTelemetryRecords
+                  - xray:PutTraceSegments
+                Resource: '*'
+
+  EntitlementLifecycleLogGroup:
+    Type: AWS::Logs::LogGroup
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
+    Properties:
+      LogGroupName: !Sub /aws/lambda/${EntitlementLifecycleFunction}
+      RetentionInDays: 30
+
+  EntitlementLifecycleSchedulerRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub e3i-${Environment}-${ToolId}-entitlement-scheduler
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal: { Service: scheduler.amazonaws.com }
+            Action: sts:AssumeRole
+      Policies:
+        - PolicyName: invoke-entitlement-lifecycle
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action: lambda:InvokeFunction
+                Resource: !GetAtt EntitlementLifecycleFunction.Arn
+
+  EntitlementLifecycleSchedule:
+    Type: AWS::Scheduler::Schedule
+    Properties:
+      Name: !Sub e3i-${Environment}-${ToolId}-entitlements-hourly
+      Description: Suspende entitlements vencidos sem remover dados do workspace
+      State: !Ref EntitlementScheduleState
+      ScheduleExpression: rate(1 hour)
+      FlexibleTimeWindow: { Mode: 'OFF' }
+      Target:
+        Arn: !GetAtt EntitlementLifecycleFunction.Arn
+        RoleArn: !GetAtt EntitlementLifecycleSchedulerRole.Arn
+        RetryPolicy:
+          MaximumEventAgeInSeconds: 3600
+          MaximumRetryAttempts: 2
+
   ServerlessHttpApi:
     Type: AWS::Serverless::HttpApi
     Properties:
       StageName: $default
       CorsConfiguration:
         AllowOrigins: [!Ref AllowedOrigin, !Ref PreviewOrigin]
+        AllowCredentials: true
         AllowMethods: [GET, POST, PATCH, DELETE, OPTIONS]
         AllowHeaders: [authorization, content-type, x-workspace-id]
         MaxAge: 600
@@ -410,6 +604,7 @@ Resources:
                   - cognito-idp:AdminInitiateAuth
                   - cognito-idp:AdminSetUserPassword
                   - cognito-idp:AdminUpdateUserAttributes
+                  - cognito-idp:RevokeToken
                 Resource: !GetAtt UserPool.Arn
               - Effect: Allow
                 Action:
@@ -531,6 +726,8 @@ Outputs:
     Value: !Ref UserPool
   CognitoUserPoolClientId:
     Value: !Ref UserPoolClient
+  PreTokenGenerationFunctionName:
+    Value: !Ref PreTokenGenerationFunction
   ApiUrl:
     Description: Endpoint ativo conforme ApiMode
     Value: !If
@@ -552,6 +749,8 @@ Outputs:
     Value: !Ref NotificationFunction
   NotificationScheduleName:
     Value: !Ref NotificationSchedule
+  EntitlementScheduleName:
+    Value: !Ref EntitlementLifecycleSchedule
   NotificationDkimToken1:
     Value: !GetAtt NotificationEmailIdentity.DkimDNSTokenName1
   NotificationDkimValue1:
