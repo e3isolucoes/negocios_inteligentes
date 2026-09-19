@@ -1,0 +1,230 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://e3i.dev/contracts/obrigacoes/activity.schema.json",
+  "title": "E3I Obrigações — Activity Record",
+  "type": "object",
+  "required": [
+    "id",
+    "name",
+    "frequency",
+    "provenance"
+  ],
+  "properties": {
+    "id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "name": {
+      "type": "string",
+      "minLength": 1
+    },
+    "category": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "module_key": {
+      "type": "string",
+      "default": "fiscal"
+    },
+    "company_id": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "responsible": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "responsible_id": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "frequency": {
+      "type": "string",
+      "enum": [
+        "diaria",
+        "mensal",
+        "trimestral",
+        "anual",
+        "pontual"
+      ]
+    },
+    "day_of_month": {
+      "type": [
+        "integer",
+        "null"
+      ],
+      "minimum": 1,
+      "maximum": 31
+    },
+    "month": {
+      "type": [
+        "integer",
+        "null"
+      ],
+      "minimum": 1,
+      "maximum": 12
+    },
+    "months": {
+      "type": [
+        "array",
+        "null"
+      ],
+      "items": {
+        "type": "integer",
+        "minimum": 1,
+        "maximum": 12
+      },
+      "uniqueItems": true
+    },
+    "due_date": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "format": "date"
+    },
+    "notes": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "priority": {
+      "type": "string"
+    },
+    "business_day_shift": {
+      "type": "string"
+    },
+    "day_type": {
+      "type": "string"
+    },
+    "requires_validation": {
+      "type": "boolean"
+    },
+    "validator_id": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "activity_type": {
+      "type": "string"
+    },
+    "process_name": {
+      "type": "string"
+    },
+    "area_name": {
+      "type": "string"
+    },
+    "predecessor_id": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "requires_attachment": {
+      "type": "boolean"
+    },
+    "requires_attachment_no_movement": {
+      "type": "boolean"
+    },
+    "version": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "created_at": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "updated_at": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "provenance": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "source",
+        "origin",
+        "operation",
+        "captured_at"
+      ],
+      "properties": {
+        "source": {
+          "type": "string",
+          "enum": [
+            "user",
+            "system",
+            "import",
+            "integration"
+          ]
+        },
+        "origin": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 120
+        },
+        "actor_id": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "operation": {
+          "type": "string",
+          "enum": [
+            "create",
+            "update",
+            "recreate",
+            "import"
+          ]
+        },
+        "captured_at": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "source_record_id": {
+          "type": "string"
+        }
+      }
+    },
+    "relatedCompanies": {
+      "type": "array",
+      "maxItems": 50,
+      "description": "Empresas apenas informativas relacionadas ao registro. Não concede membership, entitlement nem acesso ao workspace citado.",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "workspaceId",
+          "razaoSocial",
+          "cnpj"
+        ],
+        "properties": {
+          "workspaceId": {
+            "type": "string",
+            "pattern": "^[a-zA-Z0-9_-]{1,80}$"
+          },
+          "razaoSocial": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 180
+          },
+          "cnpj": {
+            "type": "string",
+            "pattern": "^[0-9]{14}$"
+          }
+        }
+      }
+    }
+  },
+  "additionalProperties": true
+}

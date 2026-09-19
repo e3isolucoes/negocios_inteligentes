@@ -619,3 +619,6 @@ h1{
 @media(max-width:760px){.system-admin-hero{align-items:flex-start;padding:24px}.system-hero-side{align-items:flex-start}.system-admin-hero,.system-section-title{flex-direction:column}.system-create-fields,.system-company-grid{grid-template-columns:1fr}.system-shortcut-list{grid-template-columns:1fr}.system-stats{grid-template-columns:1fr 1fr}.system-company-meta{grid-template-columns:1fr}}
 @media(max-width:480px){.system-stats{grid-template-columns:1fr}.system-admin-hero h2{font-size:25px}.system-portfolio{padding:16px}.system-action-btn.danger{margin-left:0}}
 .team-workspace-control{display:flex;flex-direction:column;gap:4px;font-size:11px;color:var(--ink-soft);font-weight:700}.team-workspace-control select{min-width:180px;color:var(--ink)}
+
+.related-companies-tags{display:flex;flex-wrap:wrap;gap:6px;margin:8px 0 2px}
+.related-company-tag{cursor:default;white-space:normal}

@@ -1,0 +1,141 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://e3i.dev/contracts/obrigacoes/occurrence.schema.json",
+  "title": "E3I Obrigações — Occurrence Record",
+  "type": "object",
+  "required": [
+    "id",
+    "obligation_id",
+    "occurrence_date",
+    "provenance"
+  ],
+  "properties": {
+    "id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "obligation_id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "occurrence_date": {
+      "type": "string",
+      "format": "date"
+    },
+    "done_by": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "done_by_name": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "done_at": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "attachment_path": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "checklist_total": {
+      "type": [
+        "integer",
+        "null"
+      ],
+      "minimum": 0
+    },
+    "checklist_checked": {
+      "type": [
+        "integer",
+        "null"
+      ],
+      "minimum": 0
+    },
+    "ocr_status": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "ocr_extracted_period": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "movement_status": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "version": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "created_at": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "updated_at": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "provenance": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "source",
+        "origin",
+        "operation",
+        "captured_at"
+      ],
+      "properties": {
+        "source": {
+          "type": "string",
+          "enum": [
+            "user",
+            "system",
+            "import",
+            "integration"
+          ]
+        },
+        "origin": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 120
+        },
+        "actor_id": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "operation": {
+          "type": "string",
+          "enum": [
+            "create",
+            "update",
+            "recreate",
+            "import"
+          ]
+        },
+        "captured_at": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "source_record_id": {
+          "type": "string"
+        }
+      }
+    }
+  },
+  "additionalProperties": true
+}

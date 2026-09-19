@@ -1,0 +1,765 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Transform: AWS::Serverless-2016-10-31
+Description: Backend multiempresa do E3I Painel de Obrigacoes
+
+Parameters:
+  Environment:
+    Type: String
+    Default: prod
+    AllowedValues: [dev, staging, prod]
+  ToolId:
+    Type: String
+    Default: painel-obrigacoes
+  ApiMode:
+    Type: String
+    Default: HttpApi
+    AllowedValues: [HttpApi, FunctionUrl]
+    Description: Modo de exposicao HTTP. HttpApi preserva API Gateway; FunctionUrl habilita Lambda Function URL e deve ser usado quando desejado evitar custo de API Gateway.
+  SupabaseIssuer:
+    Type: String
+    Default: https://fsyginnpvonruifetjjs.supabase.co
+    Description: Emissor secundário permitido durante o acesso único iniciado no Portal E3I
+  PortalProvisioningSecret:
+    Type: String
+    NoEcho: true
+    MinLength: 32
+    Description: Segredo HMAC compartilhado somente entre o Portal E3I e a API do Painel
+  AllowedOrigin:
+    Type: String
+    Default: https://obrigacoes.e3isolucoes.com.br
+  PreviewOrigin:
+    Type: String
+    Default: https://black-mud-078f1a310-103.centralus.7.azurestaticapps.net
+  BudgetEmail:
+    Type: String
+    Default: admin@e3isolucoes.com.br
+  MonthlyBudgetUsd:
+    Type: Number
+    Default: 5
+  TableReadCapacity:
+    Type: Number
+    Default: 20
+    MinValue: 1
+    MaxValue: 20
+    Description: RCU da tabela principal. Os 3 GSIs adicionam 1 RCU cada; maximo efetivo deste stack = 23 RCU.
+  TableWriteCapacity:
+    Type: Number
+    Default: 5
+    MinValue: 1
+    MaxValue: 5
+    Description: WCU da tabela principal. Os 3 GSIs adicionam 1 WCU cada; maximo efetivo deste stack = 8 WCU.
+  NotificationDomain:
+    Type: String
+    Default: e3isolucoes.com.br
+  NotificationFromEmail:
+    Type: String
+    Default: notificacoes@e3isolucoes.com.br
+  NotificationTestEmail:
+    Type: String
+    Default: contato@e3isolucoes.com.br
+  NotificationDaysAhead:
+    Type: Number
+    Default: 5
+    MinValue: 1
+    MaxValue: 30
+  NotificationScheduleState:
+    Type: String
+    Default: DISABLED
+    AllowedValues: [ENABLED, DISABLED]
+  EntitlementScheduleState:
+    Type: String
+    Default: ENABLED
+    AllowedValues: [ENABLED, DISABLED]
+
+Conditions:
+  IsProduction: !Equals [!Ref Environment, prod]
+  UseFunctionUrl: !Equals [!Ref ApiMode, FunctionUrl]
+
+Globals:
+  Function:
+    Runtime: nodejs22.x
+    Architectures: [arm64]
+    MemorySize: 256
+    Timeout: 15
+    Tracing: Active
+
+Resources:
+  UserPool:
+    Type: AWS::Cognito::UserPool
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
+    Properties:
+      UserPoolName: !Sub e3i-${Environment}-${ToolId}
+      UsernameAttributes: [email]
+      Schema:
+        - Name: legacy_user_id
+          AttributeDataType: String
+          Mutable: false
+          StringAttributeConstraints:
+            MinLength: '1'
+            MaxLength: '64'
+        - Name: active_workspace_id
+          AttributeDataType: String
+          Mutable: true
+          StringAttributeConstraints:
+            MinLength: '1'
+            MaxLength: '80'
+      AutoVerifiedAttributes: [email]
+      AccountRecoverySetting:
+        RecoveryMechanisms:
+          - Name: verified_email
+            Priority: 1
+      EmailConfiguration:
+        EmailSendingAccount: DEVELOPER
+        From: !Sub E3I Solucoes <${NotificationFromEmail}>
+        SourceArn: !Sub arn:${AWS::Partition}:ses:${AWS::Region}:${AWS::AccountId}:identity/${NotificationDomain}
+      Policies:
+        PasswordPolicy:
+          MinimumLength: 8
+          RequireLowercase: true
+          RequireNumbers: true
+          RequireSymbols: false
+          RequireUppercase: true
+          TemporaryPasswordValidityDays: 7
+      UserAttributeUpdateSettings:
+        AttributesRequireVerificationBeforeUpdate: [email]
+      LambdaConfig:
+        PreTokenGeneration: !GetAtt PreTokenGenerationFunction.Arn
+        PreTokenGenerationConfig:
+          LambdaArn: !GetAtt PreTokenGenerationFunction.Arn
+          LambdaVersion: V1_0
+      UserPoolTags:
+        e3i:tool: !Ref ToolId
+        e3i:environment: !Ref Environment
+
+  UserPoolClient:
+    Type: AWS::Cognito::UserPoolClient
+    Properties:
+      ClientName: !Sub e3i-${Environment}-${ToolId}-web
+      UserPoolId: !Ref UserPool
+      GenerateSecret: false
+      PreventUserExistenceErrors: ENABLED
+      EnableTokenRevocation: true
+      ExplicitAuthFlows: [ALLOW_ADMIN_USER_PASSWORD_AUTH, ALLOW_REFRESH_TOKEN_AUTH]
+      AccessTokenValidity: 1
+      IdTokenValidity: 1
+      RefreshTokenValidity: 30
+      TokenValidityUnits:
+        AccessToken: hours
+        IdToken: hours
+        RefreshToken: days
+  DataTable:
+    Type: AWS::DynamoDB::Table
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
+    Properties:
+      TableName: !Sub e3i-${Environment}-${ToolId}
+      DeletionProtectionEnabled: !If [IsProduction, true, false]
+      BillingMode: PROVISIONED
+      ProvisionedThroughput:
+        ReadCapacityUnits: !Ref TableReadCapacity
+        WriteCapacityUnits: !Ref TableWriteCapacity
+      AttributeDefinitions:
+        - AttributeName: PK
+          AttributeType: S
+        - AttributeName: SK
+          AttributeType: S
+        - AttributeName: GSI1PK
+          AttributeType: S
+        - AttributeName: GSI1SK
+          AttributeType: S
+        - AttributeName: GSIRecordPK
+          AttributeType: S
+        - AttributeName: GSIRecordSK
+          AttributeType: S
+        - AttributeName: GSIDueDatePK
+          AttributeType: S
+        - AttributeName: GSIDueDateSK
+          AttributeType: S
+      KeySchema:
+        - AttributeName: PK
+          KeyType: HASH
+        - AttributeName: SK
+          KeyType: RANGE
+      GlobalSecondaryIndexes:
+        - IndexName: GSI1
+          KeySchema:
+            - AttributeName: GSI1PK
+              KeyType: HASH
+            - AttributeName: GSI1SK
+              KeyType: RANGE
+          Projection:
+            ProjectionType: ALL
+          ProvisionedThroughput:
+            ReadCapacityUnits: 1
+            WriteCapacityUnits: 1
+        - IndexName: GSI-RECORD-LOOKUP
+          KeySchema:
+            - AttributeName: GSIRecordPK
+              KeyType: HASH
+            - AttributeName: GSIRecordSK
+              KeyType: RANGE
+          Projection:
+            ProjectionType: ALL
+          ProvisionedThroughput:
+            ReadCapacityUnits: 1
+            WriteCapacityUnits: 1
+        - IndexName: GSI-DUEDATE
+          KeySchema:
+            - AttributeName: GSIDueDatePK
+              KeyType: HASH
+            - AttributeName: GSIDueDateSK
+              KeyType: RANGE
+          Projection:
+            ProjectionType: ALL
+          ProvisionedThroughput:
+            ReadCapacityUnits: 1
+            WriteCapacityUnits: 1
+      PointInTimeRecoverySpecification:
+        PointInTimeRecoveryEnabled: !If [IsProduction, true, false]
+      SSESpecification:
+        SSEEnabled: true
+      Tags:
+        - { Key: e3i:tool, Value: !Ref ToolId }
+        - { Key: e3i:environment, Value: !Ref Environment }
+        - { Key: e3i:data-classification, Value: confidential }
+
+  FilesBucket:
+    Type: AWS::S3::Bucket
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
+    Properties:
+      BucketName: !Sub e3i-${Environment}-${ToolId}-files-${AWS::AccountId}
+      BucketEncryption:
+        ServerSideEncryptionConfiguration:
+          - ServerSideEncryptionByDefault: { SSEAlgorithm: AES256 }
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        BlockPublicPolicy: true
+        IgnorePublicAcls: true
+        RestrictPublicBuckets: true
+      VersioningConfiguration: { Status: Enabled }
+      LifecycleConfiguration:
+        Rules:
+          - Id: abort-incomplete-uploads
+            Status: Enabled
+            AbortIncompleteMultipartUpload: { DaysAfterInitiation: 7 }
+          - Id: expire-old-versions
+            Status: Enabled
+            NoncurrentVersionExpiration: { NoncurrentDays: 90 }
+      CorsConfiguration:
+        CorsRules:
+          - AllowedOrigins: [!Ref AllowedOrigin, !Ref PreviewOrigin]
+            AllowedMethods: [GET, PUT]
+            AllowedHeaders: ['content-type']
+            ExposedHeaders: [ETag]
+            MaxAge: 300
+      Tags:
+        - { Key: e3i:tool, Value: !Ref ToolId }
+        - { Key: e3i:environment, Value: !Ref Environment }
+
+  ApiFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      CodeUri: api/dist/
+      Handler: handler.handler
+      FunctionName: !Sub e3i-${Environment}-${ToolId}-api
+      Role: !GetAtt ApiExecutionRole.Arn
+      Environment:
+        Variables:
+          TABLE_NAME: !Ref DataTable
+          FILES_BUCKET: !Ref FilesBucket
+          APP_ENV: !Ref Environment
+          TOOL_ID: !Ref ToolId
+          AUTH_ISSUER: !Sub https://cognito-idp.${AWS::Region}.${AWS::URLSuffix}/${UserPool}
+          AUTH_AUDIENCE: !Ref UserPoolClient
+          USER_POOL_ID: !Ref UserPool
+          USER_POOL_CLIENT_ID: !Ref UserPoolClient
+          SUPABASE_ISSUER: !Ref SupabaseIssuer
+          PORTAL_PROVISIONING_SECRET: !Ref PortalProvisioningSecret
+          ALLOWED_ORIGINS: !Join [',', [!Ref AllowedOrigin, !Ref PreviewOrigin]]
+      Events:
+        Proxy:
+          Type: HttpApi
+          Properties:
+            ApiId: !Ref ServerlessHttpApi
+            Path: /{proxy+}
+            Method: ANY
+
+  ApiFunctionUrl:
+    Type: AWS::Lambda::Url
+    Condition: UseFunctionUrl
+    Properties:
+      AuthType: NONE
+      InvokeMode: BUFFERED
+      TargetFunctionArn: !GetAtt ApiFunction.Arn
+      # CORS permanece no handler para evitar cabecalhos duplicados na Function URL.
+
+  ApiFunctionUrlInvokePermission:
+    Type: AWS::Lambda::Permission
+    Condition: UseFunctionUrl
+    Properties:
+      Action: lambda:InvokeFunctionUrl
+      FunctionName: !Ref ApiFunction
+      FunctionUrlAuthType: NONE
+      Principal: '*'
+
+  ApiFunctionUrlInvokeFunctionPermission:
+    Type: AWS::Lambda::Permission
+    Condition: UseFunctionUrl
+    Properties:
+      Action: lambda:InvokeFunction
+      FunctionName: !Ref ApiFunction
+      InvokedViaFunctionUrl: true
+      Principal: '*'
+
+  PreTokenGenerationFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      CodeUri: api/dist/
+      Handler: pre-token-generation.handler
+      FunctionName: !Sub e3i-${Environment}-${ToolId}-pre-token
+      Role: !GetAtt PreTokenGenerationRole.Arn
+      Timeout: 10
+      Environment:
+        Variables:
+          TABLE_NAME: !Ref DataTable
+
+  PreTokenGenerationRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub e3i-${Environment}-${ToolId}-pre-token
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal: { Service: lambda.amazonaws.com }
+            Action: sts:AssumeRole
+      Policies:
+        - PolicyName: pre-token-member-lookup
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - dynamodb:GetItem
+                Resource: !GetAtt DataTable.Arn
+              - Effect: Allow
+                Action:
+                  - dynamodb:Query
+                Resource:
+                  - !Sub ${DataTable.Arn}/index/GSI1
+              - Effect: Allow
+                Action:
+                  - logs:CreateLogStream
+                  - logs:PutLogEvents
+                Resource: !Sub arn:${AWS::Partition}:logs:${AWS::Region}:${AWS::AccountId}:log-group:/aws/lambda/e3i-${Environment}-${ToolId}-pre-token:*
+              - Effect: Allow
+                Action:
+                  - xray:PutTelemetryRecords
+                  - xray:PutTraceSegments
+                Resource: '*'
+
+  PreTokenGenerationLogGroup:
+    Type: AWS::Logs::LogGroup
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
+    Properties:
+      LogGroupName: !Sub /aws/lambda/${PreTokenGenerationFunction}
+      RetentionInDays: 30
+
+  PreTokenGenerationInvokePermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      Action: lambda:InvokeFunction
+      FunctionName: !Ref PreTokenGenerationFunction
+      Principal: cognito-idp.amazonaws.com
+      SourceArn: !GetAtt UserPool.Arn
+
+  NotificationEmailIdentity:
+    Type: AWS::SES::EmailIdentity
+    Properties:
+      EmailIdentity: !Ref NotificationDomain
+
+  NotificationFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      CodeUri: api/dist/
+      Handler: notifications.handler
+      FunctionName: !Sub e3i-${Environment}-${ToolId}-notifications
+      Role: !GetAtt NotificationExecutionRole.Arn
+      Timeout: 60
+      Environment:
+        Variables:
+          TABLE_NAME: !Ref DataTable
+          NOTIFICATION_FROM_EMAIL: !Ref NotificationFromEmail
+          NOTIFICATION_DAYS_AHEAD: !Ref NotificationDaysAhead
+
+  NotificationExecutionRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub e3i-${Environment}-${ToolId}-notifications
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal: { Service: lambda.amazonaws.com }
+            Action: sts:AssumeRole
+      Policies:
+        - PolicyName: notification-data-email-logs
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action: [dynamodb:DescribeTable, dynamodb:Scan]
+                Resource: !GetAtt DataTable.Arn
+              - Effect: Allow
+                Action: [ses:SendEmail]
+                Resource:
+                  - !Sub arn:${AWS::Partition}:ses:${AWS::Region}:${AWS::AccountId}:identity/${NotificationDomain}
+                  - !Sub arn:${AWS::Partition}:ses:${AWS::Region}:${AWS::AccountId}:identity/${NotificationTestEmail}
+              - Effect: Allow
+                Action: [logs:CreateLogStream, logs:PutLogEvents]
+                Resource: !Sub arn:${AWS::Partition}:logs:${AWS::Region}:${AWS::AccountId}:log-group:/aws/lambda/e3i-${Environment}-${ToolId}-notifications:*
+              - Effect: Allow
+                Action: [xray:PutTelemetryRecords, xray:PutTraceSegments]
+                Resource: '*'
+
+  NotificationLogGroup:
+    Type: AWS::Logs::LogGroup
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
+    Properties:
+      LogGroupName: !Sub /aws/lambda/${NotificationFunction}
+      RetentionInDays: 30
+
+  NotificationSchedulerRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub e3i-${Environment}-${ToolId}-notification-scheduler
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal: { Service: scheduler.amazonaws.com }
+            Action: sts:AssumeRole
+      Policies:
+        - PolicyName: invoke-notifications
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action: lambda:InvokeFunction
+                Resource: !GetAtt NotificationFunction.Arn
+
+  NotificationSchedule:
+    Type: AWS::Scheduler::Schedule
+    Properties:
+      Name: !Sub e3i-${Environment}-${ToolId}-weekdays-0830
+      Description: Resumo de atividades para responsáveis e gestores
+      State: !Ref NotificationScheduleState
+      ScheduleExpression: cron(30 8 ? * MON-FRI *)
+      ScheduleExpressionTimezone: America/Sao_Paulo
+      FlexibleTimeWindow: { Mode: 'OFF' }
+      Target:
+        Arn: !GetAtt NotificationFunction.Arn
+        RoleArn: !GetAtt NotificationSchedulerRole.Arn
+        RetryPolicy:
+          MaximumEventAgeInSeconds: 3600
+          MaximumRetryAttempts: 2
+
+  EntitlementLifecycleFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      CodeUri: api/dist/
+      Handler: entitlements.handler
+      FunctionName: !Sub e3i-${Environment}-${ToolId}-entitlement-lifecycle
+      Role: !GetAtt EntitlementLifecycleRole.Arn
+      Timeout: 30
+      Environment:
+        Variables:
+          TABLE_NAME: !Ref DataTable
+
+  EntitlementLifecycleRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub e3i-${Environment}-${ToolId}-entitlement-lifecycle
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal: { Service: lambda.amazonaws.com }
+            Action: sts:AssumeRole
+      Policies:
+        - PolicyName: entitlement-lifecycle
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - dynamodb:Scan
+                  - dynamodb:UpdateItem
+                Resource: !GetAtt DataTable.Arn
+              - Effect: Allow
+                Action:
+                  - logs:CreateLogStream
+                  - logs:PutLogEvents
+                Resource: !Sub arn:${AWS::Partition}:logs:${AWS::Region}:${AWS::AccountId}:log-group:/aws/lambda/e3i-${Environment}-${ToolId}-entitlement-lifecycle:*
+              - Effect: Allow
+                Action:
+                  - xray:PutTelemetryRecords
+                  - xray:PutTraceSegments
+                Resource: '*'
+
+  EntitlementLifecycleLogGroup:
+    Type: AWS::Logs::LogGroup
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
+    Properties:
+      LogGroupName: !Sub /aws/lambda/${EntitlementLifecycleFunction}
+      RetentionInDays: 30
+
+  EntitlementLifecycleSchedulerRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub e3i-${Environment}-${ToolId}-entitlement-scheduler
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal: { Service: scheduler.amazonaws.com }
+            Action: sts:AssumeRole
+      Policies:
+        - PolicyName: invoke-entitlement-lifecycle
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action: lambda:InvokeFunction
+                Resource: !GetAtt EntitlementLifecycleFunction.Arn
+
+  EntitlementLifecycleSchedule:
+    Type: AWS::Scheduler::Schedule
+    Properties:
+      Name: !Sub e3i-${Environment}-${ToolId}-entitlements-hourly
+      Description: Suspende entitlements vencidos sem remover dados do workspace
+      State: !Ref EntitlementScheduleState
+      ScheduleExpression: rate(1 hour)
+      FlexibleTimeWindow: { Mode: 'OFF' }
+      Target:
+        Arn: !GetAtt EntitlementLifecycleFunction.Arn
+        RoleArn: !GetAtt EntitlementLifecycleSchedulerRole.Arn
+        RetryPolicy:
+          MaximumEventAgeInSeconds: 3600
+          MaximumRetryAttempts: 2
+
+  ServerlessHttpApi:
+    Type: AWS::Serverless::HttpApi
+    Properties:
+      StageName: $default
+      CorsConfiguration:
+        AllowOrigins: [!Ref AllowedOrigin, !Ref PreviewOrigin]
+        AllowCredentials: true
+        AllowMethods: [GET, POST, PATCH, DELETE, OPTIONS]
+        AllowHeaders: [authorization, content-type, x-workspace-id]
+        MaxAge: 600
+      DefaultRouteSettings:
+        ThrottlingBurstLimit: 5
+        ThrottlingRateLimit: 2
+
+  ApiExecutionRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub e3i-${Environment}-${ToolId}-api
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal: { Service: lambda.amazonaws.com }
+            Action: sts:AssumeRole
+      Policies:
+        - PolicyName: data-and-files
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - dynamodb:BatchGetItem
+                  - dynamodb:BatchWriteItem
+                  - dynamodb:DeleteItem
+                  - dynamodb:DescribeTable
+                  - dynamodb:GetItem
+                  - dynamodb:PutItem
+                  - dynamodb:Query
+                  - dynamodb:TransactGetItems
+                  - dynamodb:TransactWriteItems
+                  - dynamodb:UpdateItem
+                Resource:
+                  - !GetAtt DataTable.Arn
+                  - !Sub ${DataTable.Arn}/index/*
+              - Effect: Allow
+                Action:
+                  - cognito-idp:AdminCreateUser
+                  - cognito-idp:AdminGetUser
+                  - cognito-idp:AdminInitiateAuth
+                  - cognito-idp:AdminSetUserPassword
+                  - cognito-idp:AdminUpdateUserAttributes
+                  - cognito-idp:RevokeToken
+                Resource: !GetAtt UserPool.Arn
+              - Effect: Allow
+                Action:
+                  - s3:GetObject
+                  - s3:PutObject
+                  - s3:DeleteObject
+                Resource: !Sub ${FilesBucket.Arn}/*
+              - Effect: Allow
+                Action:
+                  - logs:CreateLogStream
+                  - logs:PutLogEvents
+                Resource: !Sub arn:${AWS::Partition}:logs:${AWS::Region}:${AWS::AccountId}:log-group:/aws/lambda/e3i-${Environment}-${ToolId}-api:*
+              - Effect: Allow
+                Action:
+                  - xray:PutTelemetryRecords
+                  - xray:PutTraceSegments
+                Resource: '*'
+
+  ApiLogGroup:
+    Type: AWS::Logs::LogGroup
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
+    Properties:
+      LogGroupName: !Sub /aws/lambda/${ApiFunction}
+      RetentionInDays: 30
+
+  LambdaErrorsAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: !Sub e3i-${Environment}-${ToolId}-lambda-errors
+      AlarmDescription: Erros no backend do Painel de Obrigacoes
+      Namespace: AWS/Lambda
+      MetricName: Errors
+      Dimensions: [{ Name: FunctionName, Value: !Ref ApiFunction }]
+      Statistic: Sum
+      Period: 300
+      EvaluationPeriods: 1
+      Threshold: 1
+      ComparisonOperator: GreaterThanOrEqualToThreshold
+      TreatMissingData: notBreaching
+
+  LambdaThrottlesAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: !Sub e3i-${Environment}-${ToolId}-lambda-throttles
+      Namespace: AWS/Lambda
+      MetricName: Throttles
+      Dimensions: [{ Name: FunctionName, Value: !Ref ApiFunction }]
+      Statistic: Sum
+      Period: 300
+      EvaluationPeriods: 1
+      Threshold: 1
+      ComparisonOperator: GreaterThanOrEqualToThreshold
+      TreatMissingData: notBreaching
+
+  NotificationErrorsAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: !Sub e3i-${Environment}-${ToolId}-notification-errors
+      AlarmDescription: Erros no envio de notificacoes por e-mail
+      Namespace: AWS/Lambda
+      MetricName: Errors
+      Dimensions: [{ Name: FunctionName, Value: !Ref NotificationFunction }]
+      Statistic: Sum
+      Period: 300
+      EvaluationPeriods: 1
+      Threshold: 1
+      ComparisonOperator: GreaterThanOrEqualToThreshold
+      TreatMissingData: notBreaching
+
+  DynamoReadThrottlesAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: !Sub e3i-${Environment}-${ToolId}-dynamodb-read-throttles
+      Namespace: AWS/DynamoDB
+      MetricName: ReadThrottleEvents
+      Dimensions: [{ Name: TableName, Value: !Ref DataTable }]
+      Statistic: Sum
+      Period: 300
+      EvaluationPeriods: 1
+      Threshold: 1
+      ComparisonOperator: GreaterThanOrEqualToThreshold
+      TreatMissingData: notBreaching
+
+  DynamoWriteThrottlesAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: !Sub e3i-${Environment}-${ToolId}-dynamodb-write-throttles
+      Namespace: AWS/DynamoDB
+      MetricName: WriteThrottleEvents
+      Dimensions: [{ Name: TableName, Value: !Ref DataTable }]
+      Statistic: Sum
+      Period: 300
+      EvaluationPeriods: 1
+      Threshold: 1
+      ComparisonOperator: GreaterThanOrEqualToThreshold
+      TreatMissingData: notBreaching
+
+  MonthlyBudget:
+    Type: AWS::Budgets::Budget
+    Properties:
+      Budget:
+        BudgetLimit: { Amount: !Ref MonthlyBudgetUsd, Unit: USD }
+        BudgetName: !Sub e3i-${Environment}-${ToolId}
+        BudgetType: COST
+        TimeUnit: MONTHLY
+      NotificationsWithSubscribers:
+        - Notification:
+            ComparisonOperator: GREATER_THAN
+            NotificationType: FORECASTED
+            Threshold: 80
+            ThresholdType: PERCENTAGE
+          Subscribers:
+            - Address: !Ref BudgetEmail
+              SubscriptionType: EMAIL
+
+Outputs:
+  CognitoUserPoolId:
+    Value: !Ref UserPool
+  CognitoUserPoolClientId:
+    Value: !Ref UserPoolClient
+  PreTokenGenerationFunctionName:
+    Value: !Ref PreTokenGenerationFunction
+  ApiUrl:
+    Description: Endpoint ativo conforme ApiMode
+    Value: !If
+      - UseFunctionUrl
+      - !GetAtt ApiFunctionUrl.FunctionUrl
+      - !Sub https://${ServerlessHttpApi}.execute-api.${AWS::Region}.${AWS::URLSuffix}
+  ApiGatewayUrl:
+    Description: Endpoint HTTP API preservado para compatibilidade
+    Value: !Sub https://${ServerlessHttpApi}.execute-api.${AWS::Region}.${AWS::URLSuffix}
+  FunctionUrlEndpoint:
+    Condition: UseFunctionUrl
+    Description: Endpoint Lambda Function URL quando ApiMode=FunctionUrl
+    Value: !GetAtt ApiFunctionUrl.FunctionUrl
+  TableName:
+    Value: !Ref DataTable
+  FilesBucketName:
+    Value: !Ref FilesBucket
+  NotificationFunctionName:
+    Value: !Ref NotificationFunction
+  NotificationScheduleName:
+    Value: !Ref NotificationSchedule
+  EntitlementScheduleName:
+    Value: !Ref EntitlementLifecycleSchedule
+  NotificationDkimToken1:
+    Value: !GetAtt NotificationEmailIdentity.DkimDNSTokenName1
+  NotificationDkimValue1:
+    Value: !GetAtt NotificationEmailIdentity.DkimDNSTokenValue1
+  NotificationDkimToken2:
+    Value: !GetAtt NotificationEmailIdentity.DkimDNSTokenName2
+  NotificationDkimValue2:
+    Value: !GetAtt NotificationEmailIdentity.DkimDNSTokenValue2
+  NotificationDkimToken3:
+    Value: !GetAtt NotificationEmailIdentity.DkimDNSTokenName3
+  NotificationDkimValue3:
+    Value: !GetAtt NotificationEmailIdentity.DkimDNSTokenValue3
