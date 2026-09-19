@@ -1,12 +1,12 @@
 import { isSupabaseConfigured } from './supabaseClient.js';
-import { STATE, isAdmin } from './state.js';
+import { STATE, isAdmin, hasAdministrationAccess } from './state.js';
 import {
   onAuthStateChange, getSession, fetchMyProfile, signOut, isPasswordRecoveryUrl, setSession,
   completePortalSso,
 } from './api/auth.js';
 import { bootstrapPortalSession } from './api/portalAuth.js';
-import { loadAll, doChangeModuleAccess } from './data.js?v=20260903-sso-modular-v1';
-import { render } from './render.js?v=20260903-sso-modular-v1';
+import { loadAll, doChangeModuleAccess, doChangeAdministrationAccess } from './data.js?v=20260919-design-system-v2';
+import { render } from './render.js?v=20260919-design-system-v2';
 import {
   showLogin, wireLogin, showResetPasswordScreen, wireResetPasswordScreen,
 } from './ui/login.js';
@@ -21,7 +21,7 @@ function wireModalBackdrop() {
   document.body.insertAdjacentHTML('beforeend', '<div class="modal-backdrop" id="modalBackdrop" hidden><div class="modal" id="modal"></div></div>');
   document.getElementById('modalBackdrop').addEventListener('click', (e) => {
     if (e.target.id === 'modalBackdrop') {
-      import('./ui/modal.js').then(({ closeModal }) => closeModal());
+      import('./ui/modal.js?v=20260919-design-system-v2').then(({ closeModal }) => closeModal());
       import('./ui/ruleModal.js').then(({ closeRuleModal }) => closeRuleModal());
     }
   });
@@ -30,6 +30,13 @@ function wireModalBackdrop() {
 function wireMainModuleCompatibility() {
   const app = document.getElementById('app');
   app.addEventListener('click', (event) => {
+    if (event.target.closest('[data-action="clear-filters"]')) {
+      // O render.js limpa os filtros tradicionais. Aqui também removemos o
+      // recorte de módulo, para "Remover filtros" realmente voltar à visão total.
+      STATE.activeModule = 'all';
+      return;
+    }
+
     const button = event.target.closest('[data-action="module"]');
     if (!button) return;
     STATE.view = 'board';
@@ -38,8 +45,31 @@ function wireMainModuleCompatibility() {
     render();
   });
   app.addEventListener('change', (event) => {
+    const moduleFilter = event.target.closest('select[data-action="module-filter"]');
+    if (moduleFilter) {
+      STATE.view = 'board';
+      STATE.activeModule = moduleFilter.value || 'all';
+      render();
+      return;
+    }
+
+    const filterSelect = event.target.closest('select[data-action="filter-select"]');
+    if (filterSelect) {
+      const key = filterSelect.getAttribute('data-filter');
+      if (key) STATE.filters[key] = filterSelect.value || 'all';
+      render();
+      return;
+    }
+
+    const adminToggle = event.target.closest('input[data-action="team-administration-access"]');
+    if (adminToggle) {
+      if (!isAdmin()) return;
+      doChangeAdministrationAccess(adminToggle.getAttribute('data-id'), adminToggle.checked, render);
+      return;
+    }
+
     const toggle = event.target.closest('input[data-action="team-module-access"]');
-    if (!toggle || !isAdmin()) return;
+    if (!toggle || !hasAdministrationAccess()) return;
     const profileId = toggle.getAttribute('data-id');
     const checked = Array.from(document.querySelectorAll(`input[data-action="team-module-access"][data-id="${profileId}"]:checked`)).map((input) => input.value);
     doChangeModuleAccess(profileId, checked, render);
@@ -133,7 +163,7 @@ async function boot() {
     if (portalSession) { await enterApp(portalSession); return; }
   } catch (error) {
     console.error('Falha no acesso único do portal', error);
-    showLogin('O acesso automático expirou. Volte ao Portal E3I e abra a ferramenta novamente.');
+    showLogin(error.message || 'O acesso automático expirou. Volte ao Portal E3I e abra a ferramenta novamente.');
     return;
   }
 
@@ -142,7 +172,8 @@ async function boot() {
     if (passwordRecoveryPending) { showResetPasswordScreen(); return; }
     if (session) { enterApp(session); } else { showLogin(); }
   });
-  await bootstrapPortalSession({ restoreSession: setSession });
+  const embeddedPortalSession = await bootstrapPortalSession({ restoreSession: setSession });
+  if (embeddedPortalSession) { await enterApp(embeddedPortalSession); return; }
   getSession().then((res) => {
     if (passwordRecoveryPending) showResetPasswordScreen();
     else if (!res.data.session) showLogin();
