@@ -3,9 +3,9 @@ import {
   CATEGORIES, ADMINISTRATIVE_MODULES, MONTH_NAMES, MONTH_FULL, PRIORITIES, DAY_TYPES, BUSINESS_DAY_SHIFTS,
 } from '../constants.js';
 import { escapeHtml } from '../dateUtils.js';
-import { doSaveObligation, doDeleteObligation, doLoadComments, doAddComment, doDeleteComment, doLoadChecklist, doAddChecklistItem, doDeleteChecklistItem } from '../data.js';
-import { validatorFieldHtml, bindValidatorField, readValidatorField } from './validatorField.js';
-import { suggestChecklist } from '../checklistSuggestions.js?v=20260814-sankhya-checklists-v1';
+import { doSaveObligation, doDeleteObligation, doLoadComments, doAddComment, doDeleteComment, doLoadChecklist, doAddChecklistItem, doDeleteChecklistItem } from '../data.js?v=20260917-task-actions-v1';
+import { validatorFieldHtml, bindValidatorField, readValidatorField } from './validatorField.js?v=20260917-task-actions-v1';
+import { suggestChecklist } from '../checklistSuggestions.js?v=20260910-cognito-auth-v1';
 
 let onSavedCallback = null;
 
@@ -28,6 +28,15 @@ function showFieldError(message) {
   actions.before(el);
 }
 
+function competenceOffsetOptions(selected = 0) {
+  return Array.from({ length: 37 }, (_, offset) => {
+    const label = offset === 0
+      ? 'Mesmo mês do vencimento'
+      : (offset === 1 ? '1 mês anterior ao vencimento' : `${offset} meses anteriores ao vencimento`);
+    return `<option value="${offset}" ${Number(selected || 0) === offset ? 'selected' : ''}>${label}</option>`;
+  }).join('');
+}
+
 export function openModal(editId, { onSaved } = {}) {
   onSavedCallback = onSaved || null;
   STATE.editingId = editId || null;
@@ -46,10 +55,13 @@ export function openModal(editId, { onSaved } = {}) {
     month: 1,
     months: [3, 6, 9, 12],
     due_date: '',
+    competence_offset_months: 0,
     notes: '',
     priority: 'media',
     business_day_shift: 'nenhum',
     day_type: 'fixo',
+    requires_validation: false,
+    validator_id: null,
   };
   const empresaNomeAtual = existing ? companyName(existing.company_id) : (STATE.companies[0]?.name || '');
 
@@ -114,7 +126,7 @@ export function openModal(editId, { onSaved } = {}) {
     + `<option value="__other__" ${isOtherResponsible ? 'selected' : ''}>Outro (não está na equipe do sistema)</option>`;
   html += '<div class="field"><label>Responsável</label>'
     + `<select id="fResponsibleSelect">${responsibleOptions}</select>`
-    + `<input id="fResponsibleOther" type="text" placeholder="Nome da pessoa" value="${escapeHtml(isOtherResponsible ? ob.responsible : '')}" style="margin-top:7px;" class="${isOtherResponsible ? '' : 'hidden'}" />`
+    + `<input id="fResponsibleOther" type="text" placeholder="Nome da pessoa" value="${escapeHtml(isOtherResponsible ? ob.responsible : '')}" class="mt-8 ${isOtherResponsible ? '' : 'hidden'}" />`
     + '</div>';
 
   html += '<div class="field"><label>Frequência</label><select id="fFrequency">'
@@ -124,15 +136,16 @@ export function openModal(editId, { onSaved } = {}) {
     + `<option value="anual" ${ob.frequency === 'anual' ? 'selected' : ''}>Anual</option>`
     + `<option value="pontual" ${ob.frequency === 'pontual' ? 'selected' : ''}>Pontual (data única)</option>`
     + '</select></div>';
+  html += `<div class="field"><label>Competência / período de movimento</label><select id="fCompetenceOffset">${competenceOffsetOptions(ob.competence_offset_months)}</select><small>Define a competência automaticamente a partir do vencimento. Ex.: movimento de agosto com entrega em setembro = 1 mês anterior ao vencimento.</small></div>`;
 
   const priorityOptions = PRIORITIES.map((p) => `<option value="${p.key}" ${ob.priority === p.key ? 'selected' : ''}>${p.label}</option>`).join('');
   html += `<div class="field"><label>Prioridade</label><select id="fPriority">${priorityOptions}</select></div>`;
-  html += `<div class="field"><label><input id="fRequiresAttachment" type="checkbox" ${(ob.requires_attachment !== false) ? 'checked' : ''} style="width:auto" /> Exigir comprovante na conclusão</label></div>`;
-  html += `<div class="field" id="noMovementReceiptField"><label><input id="fRequiresAttachmentNoMovement" type="checkbox" ${(ob.requires_attachment_no_movement !== false) ? 'checked' : ''} style="width:auto" /> Exigir comprovante também quando a empresa estiver sem movimento</label></div>`;
+  html += `<div class="field"><label><input id="fRequiresAttachment" type="checkbox" ${(ob.requires_attachment !== false) ? 'checked' : ''} /> Exigir comprovante na conclusão</label></div>`;
+  html += `<div class="field" id="noMovementReceiptField"><label><input id="fRequiresAttachmentNoMovement" type="checkbox" ${(ob.requires_attachment_no_movement !== false) ? 'checked' : ''} /> Exigir comprovante também quando a empresa estiver sem movimento</label></div>`;
   html += validatorFieldHtml(
-    { ...ob, requires_validation: ob.requires_validation !== false },
+    { ...ob, requires_validation: ob.requires_validation === true },
     STATE.profiles,
-    isManager() || !isEdit,
+    isManager(),
   );
 
   const dayTypeOptions = DAY_TYPES.map((d) => `<option value="${d.key}" ${ob.day_type === d.key ? 'selected' : ''}>${d.label}</option>`).join('');
@@ -217,6 +230,7 @@ export function openModal(editId, { onSaved } = {}) {
       toggleFreqFields(rule.frequency);
       dayTypeSel.value = rule.day_type;
       updateDayLabels();
+      document.getElementById('fCompetenceOffset').value = String(rule.competence_offset_months ?? 0);
 
       const dayVal = rule.day_of_month || 10;
       ['fDayMensal', 'fDayTri', 'fDayAnual'].forEach((id) => {
@@ -346,7 +360,15 @@ async function wireChecklist(obligation) {
     suggestBtn.textContent = 'Analisando…';
     suggestionsEl.hidden = false;
     suggestionsEl.innerHTML = '<p class="comments-loading">Consultando histórico e fontes disponíveis…</p>';
-    const result = await suggestChecklist(obligation, STATE.obligations, STATE.checklistItems);
+    let result;
+    try {
+      result = await suggestChecklist(obligation, STATE.obligations, STATE.checklistItems);
+    } catch {
+      suggestionsEl.innerHTML = '<p class="comments-empty">Sua sessão ou acesso à empresa expirou. Entre novamente antes de solicitar sugestões.</p>';
+      suggestBtn.disabled = false;
+      suggestBtn.textContent = 'Sugerir novamente';
+      return;
+    }
     const current = await doLoadChecklist(obligationId);
     const existingDescriptions = new Set(current.map((item) => item.description.trim().toLowerCase()));
     const available = result.suggestions.filter((item) => !existingDescriptions.has(item.description.trim().toLowerCase()));
@@ -407,6 +429,7 @@ function readModalForm() {
     name, category, empresaNome, responsible, responsible_id, frequency, notes,
     module_key: document.getElementById('fModule').value,
     priority: document.getElementById('fPriority').value,
+    competence_offset_months: Math.max(0, Math.min(36, parseInt(document.getElementById('fCompetenceOffset').value, 10) || 0)),
     business_day_shift: document.getElementById('fBusinessDayShift')?.value || 'nenhum',
     day_type: document.getElementById('fDayType')?.value || 'fixo',
     sourceRuleId: document.getElementById('fUseRule')?.value || null,
