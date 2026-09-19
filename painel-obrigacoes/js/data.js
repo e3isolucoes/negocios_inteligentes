@@ -1,7 +1,7 @@
 import {
-  STATE, isAdmin, isSuperUser, holidaysDateSet, completionsIndex, overrideForOccurrence, rulesForRegime, taxRegimeName,
+  STATE, isAdmin, isSuperUser, hasAdministrationAccess, holidaysDateSet, completionsIndex, overrideForOccurrence, rulesForRegime, taxRegimeName,
 } from './state.js';
-import { fetchObligations, createObligation, updateObligation, deleteObligation as apiDeleteObligation, createObligationsBulk } from './api/obligations.js?v=20260813-create-rls-fix-v7';
+import { fetchObligations, createObligation, updateObligation, deleteObligation as apiDeleteObligation, createObligationsBulk } from './api/obligations.js?v=20260908-csp-wasm-v2';
 import { fetchCompletions, markCompletion, deleteCompletion } from './api/completions.js';
 import {
   fetchCompanies, ensureCompany, createCompany, updateCompany, updateCompanyRegime, deleteCompany as apiDeleteCompany,
@@ -12,7 +12,7 @@ import { fetchAuditLog } from './api/auditLog.js';
 import {
   fetchChecklistItems, fetchAllChecklistItems, createChecklistItem, createChecklistItemsBulk, deleteChecklistItem as apiDeleteChecklistItem,
   toggleChecklistItem, resetChecklistItems,
-} from './api/checklist.js?v=20260814-sankhya-checklists-v1';
+} from './api/checklist.js?v=20260917-task-actions-v1';
 import { fetchHolidays, createHoliday, deleteHoliday as apiDeleteHoliday, fetchNationalHolidays } from './api/holidays.js';
 import {
   fetchObligationRules, createObligationRule, updateObligationRule, deleteObligationRule as apiDeleteObligationRule,
@@ -24,10 +24,10 @@ import {
   fetchTaxRegimes, createTaxRegime, updateTaxRegime, deleteTaxRegime as apiDeleteTaxRegime,
   fetchTaxRegimeRules, linkRuleToRegime, unlinkRuleFromRegime,
 } from './api/taxRegimes.js';
-import { createUserAccount } from './api/adminUsers.js';
+import { createUserAccount, isAwsAdminBackend, removeUserMembership, updateUserMembership } from './api/adminUsers.js';
 import { signOut, sendPasswordResetEmail, fetchMyProfile } from './api/auth.js';
 import { uploadAttachment } from './api/storage.js';
-import { completeDialog } from './ui/completeDialog.js?v=20260817-optional-receipts-v2';
+import { completeDialog } from './ui/completeDialog.js?v=20260908-csp-wasm-v2';
 import { overrideDialog } from './ui/overrideDialog.js';
 import { applyRuleDialog } from './ui/applyRuleDialog.js';
 import { regimeDialog } from './ui/regimeDialog.js';
@@ -38,10 +38,9 @@ import { showToast } from './ui/toast.js';
 import { confirmDialog } from './ui/confirmDialog.js';
 import { findClosestProfile } from './csv.js';
 import { fetchCategories } from './api/categories.js';
-import { countPendingValidations, countRejected } from './api/validation.js';
 import { applyCategories } from './constants.js';
 import { fetchWorkspaces, createWorkspace, updateWorkspace } from './api/workspaces.js';
-import { getSankhyaChecklistTemplate } from './obligationChecklistTemplates.js?v=20260814-sankhya-checklists-v1';
+import { getSankhyaChecklistTemplate } from './obligationChecklistTemplates.js?v=20260908-csp-wasm-v2';
 
 // Carrega as dez tabelas em paralelo. Cada uma é independente — se uma
 // falhar (ex.: sem conexão), as outras ainda tentam, e sinalizamos o erro
@@ -49,13 +48,15 @@ import { getSankhyaChecklistTemplate } from './obligationChecklistTemplates.js?v
 export async function loadAll() {
   STATE.connectionError = null;
   try {
-    const [
-      obligations, completions, companies, profiles, holidays, obligationRules, occurrenceOverrides,
-      taxRegimes, taxRegimeRules, checklistItems, categories, pendingValidation, rejectedValidation,
-    ] = await Promise.all([
+    // Somente os três conjuntos que formam o quadro são críticos. Dados de
+    // apoio podem estar indisponíveis por uma concessão de módulo mais
+    // restrita ou durante uma atualização gradual da API sem derrubar o painel.
+    const [obligations, completions, companies] = await Promise.all([
       fetchObligations(),
       fetchCompletions(),
       fetchCompanies(),
+    ]);
+    const optionalLoads = await Promise.allSettled([
       fetchProfiles(),
       fetchHolidays(),
       fetchObligationRules(),
@@ -64,9 +65,21 @@ export async function loadAll() {
       fetchTaxRegimeRules(),
       fetchAllChecklistItems(),
       fetchCategories(),
-      countPendingValidations(),
-      countRejected(),
     ]);
+    const optionalValue = (index, fallback) => {
+      const result = optionalLoads[index];
+      if (result.status === 'fulfilled') return result.value;
+      console.warn('Dado complementar do painel indisponível', result.reason);
+      return fallback;
+    };
+    const profiles = optionalValue(0, STATE.profile ? [STATE.profile] : []);
+    const holidays = optionalValue(1, []);
+    const obligationRules = optionalValue(2, []);
+    const occurrenceOverrides = optionalValue(3, []);
+    const taxRegimes = optionalValue(4, []);
+    const taxRegimeRules = optionalValue(5, []);
+    const checklistItems = optionalValue(6, []);
+    const categories = optionalValue(7, []);
     STATE.obligations = obligations;
     STATE.completions = completions;
     STATE.companies = companies;
@@ -78,8 +91,17 @@ export async function loadAll() {
     STATE.taxRegimeRules = taxRegimeRules;
     STATE.checklistItems = checklistItems;
     applyCategories(categories);
-    STATE.validation = { pending: pendingValidation, rejected: rejectedValidation };
-    STATE.workspaces = isSuperUser() ? await fetchWorkspaces() : [];
+    STATE.validation = {
+      pending: completions.filter((item) => item.status === 'aguardando_validacao').length,
+      rejected: completions.filter((item) => item.status === 'rejeitada' && item.done_by === STATE.session?.id).length,
+    };
+    if (isSuperUser()) {
+      try { STATE.workspaces = await fetchWorkspaces(); }
+      catch (error) {
+        console.warn('Lista de espaços indisponível', error);
+        STATE.workspaces = [];
+      }
+    } else STATE.workspaces = [];
   } catch (err) {
     console.error('Falha ao carregar dados do painel', err);
     STATE.connectionError = 'Não foi possível carregar os dados agora. Verifique sua conexão com a internet.';
@@ -230,7 +252,10 @@ export async function doMarkDone(obligationId, onDone) {
       showToast('Alguém já registrou essa conclusão agora há pouco. Atualizando o painel…', 'info');
       await refreshObligationsAndCompletions();
     } else {
-      showToast('Não foi possível salvar a conclusão. Tente novamente.', 'error');
+      const detail = Number(err?.status) >= 400 && Number(err?.status) < 500 && err?.message
+        ? ` Motivo: ${err.message}`
+        : ' Tente novamente.';
+      showToast(`Não foi possível salvar a conclusão.${detail}`, 'error');
     }
   } finally {
     onDone?.();
@@ -348,7 +373,7 @@ export async function doSaveObligation(id, formData, onDone) {
       priority: formData.priority || 'media',
       business_day_shift: formData.business_day_shift || 'nenhum',
       day_type: formData.day_type || 'fixo',
-      requires_validation: formData.requires_validation !== false,
+      requires_validation: formData.requires_validation === true,
       validator_id: formData.validator_id || null,
       activity_type: formData.activity_type || 'obrigacao_acessoria',
       process_name: formData.process_name || '',
@@ -400,7 +425,14 @@ export async function doSaveObligation(id, formData, onDone) {
     } else if (err.code === '42501' && err.importRpcMissing) {
       showToast('A correção de segurança ainda não foi aplicada ao banco. Execute sql/migrations/20260813_fix_import_obligations.sql e tente novamente.', 'error');
     } else if (err.code === '42501') {
-      showToast('Seu perfil precisa estar ativo e vinculado ao espaço da empresa para cadastrar obrigações.', 'error');
+      showToast(id
+        ? 'Seu perfil precisa estar ativo, vinculado ao espaço da empresa e autorizado a alterar esta atividade.'
+        : 'Seu perfil precisa estar ativo e vinculado ao espaço da empresa para cadastrar obrigações.', 'error');
+    } else if (Number(err?.status) >= 400 && Number(err?.status) < 500) {
+      const fallback = Number(err?.status) === 403
+        ? 'Seu perfil não tem permissão para salvar alterações nesta atividade.'
+        : 'Não foi possível salvar a alteração.';
+      showToast(err?.message || fallback, 'error');
     } else {
       showToast('Não foi possível salvar. Verifique os campos e tente novamente.', 'error');
     }
@@ -525,7 +557,9 @@ export async function doChangeRole(profileId, newRole, onDone) {
   }
 
   try {
-    const updated = await updateProfile(profileId, { role: newRole });
+    const updated = isAwsAdminBackend()
+      ? { ...person, role: (await updateUserMembership(profileId, person.workspace_id || STATE.profile?.workspace_id, { role: newRole })).role }
+      : await updateProfile(profileId, { role: newRole });
     STATE.profiles = STATE.profiles.map((p) => (p.id === profileId ? updated : p));
     if (profileId === STATE.session?.id) STATE.profile = updated;
     const roleLabel = newRole === 'admin' ? 'administrador(a)' : (newRole === 'gestor' ? 'gestor(a)' : 'membro');
@@ -539,7 +573,7 @@ export async function doChangeRole(profileId, newRole, onDone) {
 }
 
 export async function doChangeModuleAccess(profileId, moduleAccess, onDone) {
-  if (!isAdmin()) return;
+  if (!hasAdministrationAccess()) return;
   try {
     const updated = await updateProfile(profileId, { module_access: moduleAccess });
     STATE.profiles = STATE.profiles.map((profile) => (profile.id === profileId ? updated : profile));
@@ -551,11 +585,37 @@ export async function doChangeModuleAccess(profileId, moduleAccess, onDone) {
   } finally { onDone?.(); }
 }
 
+export async function doChangeAdministrationAccess(profileId, granted, onDone) {
+  if (!isAdmin()) return;
+  const person = STATE.profiles.find((profile) => profile.id === profileId);
+  if (!person || profileId === STATE.session?.id) return;
+  const current = Array.isArray(person.module_grants) ? person.module_grants : [];
+  const next = granted
+    ? [...new Set([...current, 'administracao'])]
+    : current.filter((grant) => grant !== 'administracao');
+  try {
+    let updated = person;
+    if (isAwsAdminBackend()) {
+      const membership = await updateUserMembership(profileId, person.workspace_id || STATE.profile?.workspace_id, { module_grants: next });
+      updated = { ...person, module_grants: membership.module_grants || next };
+    } else {
+      const operational = Array.isArray(person.module_access) ? person.module_access.filter((grant) => grant !== 'administracao') : [];
+      const moduleAccess = granted ? [...operational, 'administracao'] : operational;
+      updated = await updateProfile(profileId, { module_access: moduleAccess });
+    }
+    STATE.profiles = STATE.profiles.map((profile) => (profile.id === profileId ? updated : profile));
+    showToast(granted ? 'Acesso à Administração liberado.' : 'Acesso à Administração removido.', 'success');
+  } catch (err) {
+    console.error(err);
+    showToast('Não foi possível alterar o acesso à Administração.', 'error');
+  } finally { onDone?.(); }
+}
+
 // Revoga ou reativa o acesso de alguém (profiles.active) — não apaga a
 // conta nem o perfil, só bloqueia a entrada (ver checagem em js/app.js e a
 // função is_admin() no banco, que já ignora papel de quem está revogado).
 export async function doSetUserActive(profileId, active, onDone) {
-  if (!isAdmin()) return;
+  if (!hasAdministrationAccess()) return;
   const person = STATE.profiles.find((p) => p.id === profileId);
   if (!person) return;
 
@@ -572,7 +632,9 @@ export async function doSetUserActive(profileId, active, onDone) {
   }
 
   try {
-    const updated = await updateProfile(profileId, { active });
+    const updated = isAwsAdminBackend()
+      ? { ...person, active: (await updateUserMembership(profileId, person.workspace_id || STATE.profile?.workspace_id, { active })).active }
+      : await updateProfile(profileId, { active });
     STATE.profiles = STATE.profiles.map((p) => (p.id === profileId ? updated : p));
     if (isSelf) {
       STATE.profile = updated;
@@ -596,7 +658,7 @@ export async function doSetUserActive(profileId, active, onDone) {
 // service_role key, então isso é o que um admin tem à disposição: a
 // pessoa recebe o link e escolhe a senha nova ela mesma.
 export async function doSendPasswordReset(profileId, onDone) {
-  if (!isAdmin()) return;
+  if (!hasAdministrationAccess()) return;
   const person = STATE.profiles.find((p) => p.id === profileId);
   if (!person) return;
 
@@ -966,11 +1028,12 @@ export async function doApplyRuleToCompanies(ruleId, onDone) {
 // "reativar" (junto com o botão de revogar, ver doSetUserActive acima). Se
 // o e-mail não existir ainda, cai no fluxo de criação de conta normal.
 export async function doCreateUser(formData, onDone) {
-  if (!isAdmin()) return;
+  if (!hasAdministrationAccess()) return;
   const email = (formData.email || '').trim();
   const displayName = (formData.displayName || '').trim();
   const password = formData.password || '';
-  const role = ['admin', 'gestor'].includes(formData.role) ? formData.role : 'membro';
+  const requestedRole = ['admin', 'gestor'].includes(formData.role) ? formData.role : 'membro';
+  const role = !isAdmin() && requestedRole === 'admin' ? 'gestor' : requestedRole;
   const workspaceId = isSuperUser() ? (formData.workspaceId || null) : STATE.profile?.workspace_id;
 
   if (!email || !displayName) { showToast('Informe nome e e-mail.', 'error'); return; }
@@ -982,14 +1045,14 @@ export async function doCreateUser(formData, onDone) {
     return;
   }
 
-  if (password.length < 6) { showToast('A senha precisa ter pelo menos 6 caracteres.', 'error'); return; }
+  if (!isAwsAdminBackend() && password.length < 6) { showToast('A senha precisa ter pelo menos 6 caracteres.', 'error'); return; }
 
   try {
-    const { user } = await createUserAccount({ email, password, displayName });
+    const { user, profile: serverProfile } = await createUserAccount({ email, password, displayName, workspaceId, role });
     if (!user) throw new Error('O cadastro não retornou o usuário criado.');
 
     try {
-      const profile = await updateProfile(user.id, { display_name: displayName, role, workspace_id: workspaceId });
+      const profile = serverProfile || await updateProfile(user.id, { display_name: displayName, role, workspace_id: workspaceId });
       STATE.profiles = STATE.profiles.filter((p) => p.id !== profile.id).concat(profile);
       STATE.profiles.sort((a, b) => a.email.localeCompare(b.email));
     } catch (err) {
@@ -1000,8 +1063,8 @@ export async function doCreateUser(formData, onDone) {
       showToast('Conta criada, mas não deu para ajustar nome/papel agora — corrija na lista abaixo.', 'info');
     }
 
-    STATE.pendingNewUserCredentials = { email, password };
-    showToast('Conta criada com sucesso.', 'success');
+    if (!isAwsAdminBackend()) STATE.pendingNewUserCredentials = { email, password };
+    showToast(isAwsAdminBackend() ? 'Convite enviado por e-mail com sucesso.' : 'Conta criada com sucesso.', 'success');
     onDone?.();
   } catch (err) {
     console.error(err);
@@ -1022,6 +1085,22 @@ export async function doCreateUser(formData, onDone) {
 export async function doChangeUserWorkspace(profileId, workspaceId, onDone) {
   if (!isSuperUser()) return;
   try {
+    if (isAwsAdminBackend()) {
+      const existing = STATE.profiles.find((profile) => profile.id === profileId);
+      const previousWorkspaceId = existing?.workspace_id;
+      const moving = workspaceId && previousWorkspaceId && previousWorkspaceId !== workspaceId;
+      if (workspaceId) await updateUserMembership(profileId, workspaceId, { email: existing?.email, displayName: existing?.display_name, role: existing?.role });
+      try {
+        if (previousWorkspaceId && previousWorkspaceId !== workspaceId) await removeUserMembership(profileId, previousWorkspaceId);
+      } catch (error) {
+        if (moving) await removeUserMembership(profileId, workspaceId).catch(() => {});
+        throw error;
+      }
+      const updated = { ...existing, workspace_id: workspaceId || null };
+      STATE.profiles = STATE.profiles.map((profile) => (profile.id === profileId ? updated : profile));
+      showToast(workspaceId ? 'Vínculo empresarial atualizado.' : 'Vínculo empresarial removido.', 'success');
+      return;
+    }
     const updated = await updateProfile(profileId, { workspace_id: workspaceId || null });
     STATE.profiles = STATE.profiles.map((profile) => (profile.id === profileId ? updated : profile));
     showToast(workspaceId ? 'Vínculo empresarial atualizado.' : 'Vínculo empresarial removido.', 'success');
@@ -1035,7 +1114,9 @@ export async function doChangeUserWorkspace(profileId, workspaceId, onDone) {
 
 async function doUpdateExistingUser(existing, { displayName, role, workspace_id: workspaceId }, onDone) {
   try {
-    const updated = await updateProfile(existing.id, { display_name: displayName, role, workspace_id: workspaceId || null });
+    const updated = isAwsAdminBackend()
+      ? { ...existing, display_name: displayName, role: (await updateUserMembership(existing.id, workspaceId, { role })).role, workspace_id: workspaceId }
+      : await updateProfile(existing.id, { display_name: displayName, role, workspace_id: workspaceId || null });
     STATE.profiles = STATE.profiles.map((p) => (p.id === existing.id ? updated : p));
     if (existing.id === STATE.session?.id) STATE.profile = updated;
     showToast(`Já existia uma conta com esse e-mail — dados de ${updated.display_name || updated.email} atualizados.`, 'success');
