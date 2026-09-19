@@ -5,19 +5,35 @@ import {
   getAvailableModules,
   getDefaultModule,
   getModuleById,
-} from '../platform/module-registry.js';
+} from '../modules/registry.js';
 
-test('catálogo central possui ids únicos', () => {
-  const ids = MODULE_REGISTRY.map(({ id }) => id);
-  assert.equal(new Set(ids).size, ids.length);
+test('catálogo central possui somente o módulo obrigações', () => {
+  assert.deepEqual(MODULE_REGISTRY.map(({ id }) => id), ['obrigacoes']);
 });
 
-test('obrigações é o primeiro módulo ativo da plataforma', () => {
+test('obrigações implementa o contrato explícito da plataforma', () => {
+  const module = getModuleById('obrigacoes');
+
+  assert.equal(module.id, 'obrigacoes');
+  assert.equal(module.name, 'Obrigações');
+  assert.equal(module.area, 'fiscal');
+  assert.equal(module.requiredEntitlement, 'obrigacoes');
+  assert.equal(typeof module.mount, 'function');
+  assert.equal(typeof module.unmount, 'function');
+});
+
+test('entitlement filtra o catálogo quando o contexto de permissões é fornecido', () => {
+  assert.deepEqual(
+    getAvailableModules({ entitlements: new Set(['obrigacoes']) }).map(({ id }) => id),
+    ['obrigacoes'],
+  );
+  assert.deepEqual(
+    getAvailableModules({ entitlements: new Set() }).map(({ id }) => id),
+    [],
+  );
+});
+
+test('sem motor de entitlements injetado preserva compatibilidade atual', () => {
   assert.equal(getDefaultModule()?.id, 'obrigacoes');
-  assert.equal(getModuleById('obrigacoes')?.entrypoint, './painel-obrigacoes/index.html');
-  assert.deepEqual(getAvailableModules().map(({ id }) => id), ['obrigacoes']);
-});
-
-test('módulo inexistente não é resolvido', () => {
   assert.equal(getModuleById('inexistente'), null);
 });

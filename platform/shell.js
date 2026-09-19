@@ -2,9 +2,10 @@ import {
   getAvailableModules,
   getDefaultModule,
   getModuleById,
-} from './module-registry.js';
+} from '../modules/registry.js';
 
 const PLATFORM_NAME = 'E3I Negócios Inteligentes';
+let mountedModule = null;
 
 function escapeHtml(value = '') {
   return String(value)
@@ -40,11 +41,11 @@ function resolveActiveModule() {
   return getModuleById(moduleIdFromLocation()) || getDefaultModule();
 }
 
-function moduleEntrypoint(module) {
-  const url = new URL(module.entrypoint, window.location.href);
+function resolveModuleEntrypoint(entrypoint) {
+  const url = new URL(entrypoint, window.location.href);
 
-  // O Painel já trata autenticação e recuperação. O shell apenas encaminha
-  // os parâmetros para não alterar o fluxo existente.
+  // O módulo continua responsável por autenticação e recuperação.
+  // O shell apenas encaminha os parâmetros existentes.
   const query = new URLSearchParams(window.location.search);
   query.forEach((value, key) => url.searchParams.set(key, value));
 
@@ -89,6 +90,12 @@ function renderShell(activeModule) {
   const root = document.getElementById('platformRoot');
   const modules = getAvailableModules();
 
+  if (mountedModule) {
+    const currentContainer = document.getElementById('moduleStage');
+    mountedModule.unmount(currentContainer);
+    mountedModule = null;
+  }
+
   if (!activeModule) {
     root.innerHTML = `
       <main class="platform-empty">
@@ -124,24 +131,17 @@ function renderShell(activeModule) {
       <main class="platform-main">
         <header class="platform-topbar">
           <div>
-            <span class="platform-eyebrow">Módulo ativo</span>
+            <span class="platform-eyebrow">Módulo ativo · ${escapeHtml(activeModule.area)}</span>
             <h1>${escapeHtml(activeModule.name)}</h1>
           </div>
           <div class="platform-name">${PLATFORM_NAME}</div>
         </header>
 
-        <section class="module-stage" aria-label="${escapeHtml(activeModule.name)}">
-          <div class="module-loading" id="moduleLoading" role="status">
-            Carregando ${escapeHtml(activeModule.name)}…
-          </div>
-          <iframe
-            id="activeModuleFrame"
-            class="module-frame"
-            src="${escapeHtml(moduleEntrypoint(activeModule))}"
-            title="${escapeHtml(activeModule.name)}"
-            loading="eager"
-          ></iframe>
-        </section>
+        <section
+          class="module-stage"
+          id="moduleStage"
+          aria-label="${escapeHtml(activeModule.name)}"
+        ></section>
       </main>
     </div>
   `;
@@ -153,15 +153,17 @@ function renderShell(activeModule) {
     });
   });
 
-  const frame = document.getElementById('activeModuleFrame');
-  const loading = document.getElementById('moduleLoading');
   const receivedAuthLaunch = hasForwardableAuthFragment()
     || new URLSearchParams(window.location.search).has('portal_sso_token');
 
-  frame?.addEventListener('load', () => {
-    loading?.classList.add('is-hidden');
-    if (receivedAuthLaunch) cleanPlatformLaunchUrl(activeModule);
-  }, { once: true });
+  const stage = document.getElementById('moduleStage');
+  activeModule.mount(stage, {
+    resolveEntrypoint: resolveModuleEntrypoint,
+    onLoad: () => {
+      if (receivedAuthLaunch) cleanPlatformLaunchUrl(activeModule);
+    },
+  });
+  mountedModule = activeModule;
 }
 
 function activateFromLocation() {
