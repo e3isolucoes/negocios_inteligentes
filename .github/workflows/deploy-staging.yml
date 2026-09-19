@@ -608,10 +608,14 @@ jobs:
           import json
           data=json.load(open('/tmp/final-stack.json'))
           params=data['Stacks'][0].get('Parameters', [])
-          print(json.dumps([
-              {'ParameterKey': p['ParameterKey'], 'UsePreviousValue': True}
-              for p in params
-          ]))
+          result=[]
+          for p in params:
+              key=p['ParameterKey']
+              if key == 'AllowedOrigin':
+                  result.append({'ParameterKey': key, 'ParameterValue': 'https://obrigacoes.e3isolucoes.com.br'})
+              else:
+                  result.append({'ParameterKey': key, 'UsePreviousValue': True})
+          print(json.dumps(result))
           PY
 
           aws s3 cp packaged-staging-final.yaml \
@@ -710,6 +714,57 @@ jobs:
 
           echo "Stack atualizado: $STATUS"
           echo "Pre Token Generation: $PRE_TOKEN"
+        working-directory: .
+
+      - name: Credentialed browser CORS smoke test
+        run: |
+          set -euo pipefail
+          API="https://${EXPECTED_API_ID}.execute-api.${AWS_REGION}.amazonaws.com"
+          ORIGIN="https://obrigacoes.e3isolucoes.com.br"
+
+          curl -sS -D /tmp/preflight.headers -o /tmp/preflight.body \
+            -X OPTIONS "$API/v1/portal-session/exchange" \
+            -H "Origin: $ORIGIN" \
+            -H "Access-Control-Request-Method: POST" \
+            -H "Access-Control-Request-Headers: content-type"
+
+          tr -d '\r' </tmp/preflight.headers >/tmp/preflight.clean
+          grep -Fqi "access-control-allow-origin: $ORIGIN" /tmp/preflight.clean || {
+            echo "CORS preflight sem Access-Control-Allow-Origin esperado."
+            cat /tmp/preflight.clean
+            exit 1
+          }
+          grep -Fqi "access-control-allow-credentials: true" /tmp/preflight.clean || {
+            echo "CORS preflight sem Access-Control-Allow-Credentials: true."
+            cat /tmp/preflight.clean
+            exit 1
+          }
+
+          STATUS="$(curl -sS -D /tmp/refresh.headers -o /tmp/refresh.body -w '%{http_code}' \
+            -X POST "$API/v1/session/refresh" \
+            -H "Origin: $ORIGIN" \
+            -H "Content-Type: application/json" \
+            --data '{}')"
+
+          test "$STATUS" = "204" || {
+            echo "Esperado 204 em refresh sem cookie; recebido $STATUS"
+            cat /tmp/refresh.body
+            exit 1
+          }
+
+          tr -d '\r' </tmp/refresh.headers >/tmp/refresh.clean
+          grep -Fqi "access-control-allow-origin: $ORIGIN" /tmp/refresh.clean || {
+            echo "Resposta credentialed sem Access-Control-Allow-Origin esperado."
+            cat /tmp/refresh.clean
+            exit 1
+          }
+          grep -Fqi "access-control-allow-credentials: true" /tmp/refresh.clean || {
+            echo "Resposta credentialed sem Access-Control-Allow-Credentials: true."
+            cat /tmp/refresh.clean
+            exit 1
+          }
+
+          echo "CORS credentialed validado para $ORIGIN."
         working-directory: .
 
       - name: Unauthenticated API smoke test
