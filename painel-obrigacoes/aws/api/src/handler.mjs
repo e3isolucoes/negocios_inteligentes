@@ -18,6 +18,7 @@ import {
 import { Repository } from './repository.mjs';
 import { GenericRepository } from './repository-generic.mjs';
 import { ObrigacoesRepository } from './repository-obrigacoes.mjs';
+import { SuprimentosRepository } from './repository-suprimentos.mjs';
 
 const ddb = DynamoDBDocumentClient.from(new DynamoDBClient({}), { marshallOptions: { removeUndefinedValues: true } });
 const s3 = new S3Client({});
@@ -25,6 +26,7 @@ const cognito = new CognitoIdentityProviderClient({});
 const repository = new Repository(ddb, process.env.TABLE_NAME);
 const genericRepository = new GenericRepository(ddb, process.env.TABLE_NAME);
 const obrigacoesRepository = new ObrigacoesRepository(ddb, process.env.TABLE_NAME);
+const suprimentosRepository = new SuprimentosRepository(genericRepository);
 
 function repositoryFor(entity) {
   return obrigacoesRepository.supports(entity) ? obrigacoesRepository : repository;
@@ -188,6 +190,60 @@ export async function handler(event) {
         workspaceId,
         items: await genericRepository.listEntitlements(workspaceId),
       }, event);
+    }
+
+    // OrçaFácil é o primeiro domínio não fiscal sobre o repositório genérico.
+    // O contrato HTTP preserva a operação atual de criação de análise, mas a
+    // persistência é RECORD#suprimentos#pedido-compra#<id>.
+    if (path === 'modules/suprimentos/pedidos-compra') {
+      if (method === 'POST') {
+        return response(201, await suprimentosRepository.createPedidoCompra(auth, parseBody(event)), event);
+      }
+      if (method === 'GET') {
+        return response(200, await suprimentosRepository.listPedidosCompra(auth, listOptions(event)), event);
+      }
+    }
+
+    const suprimentosConnections = path.match(
+      /^modules\/suprimentos\/pedidos-compra\/([^/]+)\/connections$/,
+    );
+    if (method === 'GET' && suprimentosConnections) {
+      return response(
+        200,
+        await suprimentosRepository.listConnections(
+          auth,
+          decodeURIComponent(suprimentosConnections[1]),
+          listOptions(event),
+        ),
+        event,
+      );
+    }
+
+    const suprimentosFiscalRelation = path.match(
+      /^modules\/suprimentos\/pedidos-compra\/([^/]+)\/fiscal-obligations\/([^/]+)$/,
+    );
+    if (method === 'POST' && suprimentosFiscalRelation) {
+      return response(
+        201,
+        await suprimentosRepository.linkFiscalObligation(
+          auth,
+          decodeURIComponent(suprimentosFiscalRelation[1]),
+          decodeURIComponent(suprimentosFiscalRelation[2]),
+          parseBody(event),
+        ),
+        event,
+      );
+    }
+
+    const suprimentosPedido = path.match(/^modules\/suprimentos\/pedidos-compra\/([^/]+)$/);
+    if (method === 'GET' && suprimentosPedido) {
+      const item = await suprimentosRepository.getPedidoCompra(
+        auth,
+        decodeURIComponent(suprimentosPedido[1]),
+      );
+      return item
+        ? response(200, item, event)
+        : response(404, { error: 'Pedido de compra não encontrado.', requestId }, event);
     }
 
     // O Painel atual pertence ao módulo "obrigacoes". Mesmo rotas legadas e
