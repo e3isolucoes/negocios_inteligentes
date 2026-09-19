@@ -1,5 +1,7 @@
 import { createHash, randomUUID } from 'node:crypto';
+import { GetCommand } from '@aws-sdk/lib-dynamodb';
 import { requireModuleGrant, requireRole } from './auth.mjs';
+import { entitySk, tenantPk } from './model.mjs';
 import { GenericRepository } from './repository-generic.mjs';
 
 const MODULE_ID = 'obrigacoes';
@@ -13,6 +15,40 @@ const ENTITY_MAP = Object.freeze({
 
 function timestamp() {
   return new Date().toISOString();
+}
+
+const OBLIGATION_STRUCTURE_FIELDS = Object.freeze([
+  'name', 'category', 'company_id', 'responsible', 'responsible_id', 'frequency',
+  'day_of_month', 'month', 'months', 'due_date', 'competence_offset_months', 'notes',
+  'activity_type', 'process_name', 'area_name', 'predecessor_id', 'module_key',
+  'requires_attachment', 'requires_attachment_no_movement', 'priority',
+  'adjust_business_day', 'day_type', 'business_day_shift', 'requires_validation', 'validator_id',
+]);
+
+function sameValue(left, right) {
+  return JSON.stringify(left ?? null) === JSON.stringify(right ?? null);
+}
+
+function obligationStructureChanged(current, patch) {
+  return OBLIGATION_STRUCTURE_FIELDS.some((field) => (
+    Object.hasOwn(patch || {}, field) && !sameValue(current?.[field], patch[field])
+  ));
+}
+
+function snapshotFields(obligation, companyName = '') {
+  const snapshot = {};
+  for (const field of OBLIGATION_STRUCTURE_FIELDS) snapshot[field] = obligation?.[field] ?? null;
+  snapshot.company_name = companyName || '';
+  snapshot.source_version = Number.isInteger(obligation?.version) ? obligation.version : null;
+  return snapshot;
+}
+
+function competenceDateForOccurrence(obligation, occurrenceDate) {
+  const match = /^(\d{4})-(\d{2})/.exec(String(occurrenceDate || ''));
+  if (!match) return null;
+  const offset = Math.max(0, Math.min(36, Number(obligation?.competence_offset_months || 0)));
+  const date = new Date(Date.UTC(Number(match[1]), Number(match[2]) - 1 - offset, 1));
+  return `${date.getUTCFullYear()}-${String(date.getUTCMonth() + 1).padStart(2, '0')}-01`;
 }
 
 function provenance(auth, operation, previous) {
@@ -80,7 +116,25 @@ function mapConditional(error) {
 
 export class ObrigacoesRepository {
   constructor(client, tableName) {
+    this.client = client;
+    this.tableName = tableName;
     this.generic = new GenericRepository(client, tableName);
+  }
+
+  async obligationSnapshot(auth, obligation) {
+    let companyName = '';
+    if (obligation?.company_id) {
+      const company = (await this.client.send(new GetCommand({
+        TableName: this.tableName,
+        Key: {
+          PK: tenantPk(auth.workspaceId),
+          SK: entitySk('companies', obligation.company_id),
+        },
+        ConsistentRead: true,
+      }))).Item;
+      companyName = String(company?.name || '');
+    }
+    return snapshotFields(obligation, companyName);
   }
 
   supports(entity) {
@@ -126,9 +180,9 @@ export class ObrigacoesRepository {
     let data;
     let dueDate;
 
-    if (entity !== 'obligations') {
-      await this.assertActivityExists(auth, input.obligation_id);
-    }
+    const activity = entity !== 'obligations'
+      ? legacyRecord(await this.assertActivityExists(auth, input.obligation_id))
+      : null;
 
     if (entity === 'obligations') {
       recordId = input.id || randomUUID();
@@ -141,11 +195,14 @@ export class ObrigacoesRepository {
       dueDate = input.due_date || undefined;
     } else if (entity === 'completions') {
       recordId = occurrenceRecordId(input);
+      const snapshot = await this.obligationSnapshot(auth, activity);
       data = {
         ...publicData(input),
         id: recordId,
         version: 1,
         done_at: input.done_at || createdAt,
+        competence_date: competenceDateForOccurrence(activity, input.occurrence_date),
+        obligation_snapshot: snapshot,
         provenance: provenance(auth, 'create'),
       };
     } else {
@@ -195,8 +252,21 @@ export class ObrigacoesRepository {
     const current = await this.get(auth, entity, id);
     if (!current) throw Object.assign(new Error('Registro não encontrado.'), { statusCode: 404 });
 
+    const publicPatch = publicData(patch);
+    if (entity === 'completions') {
+      publicPatch.competence_date = current.competence_date ?? publicPatch.competence_date;
+      publicPatch.obligation_snapshot = current.obligation_snapshot ?? publicPatch.obligation_snapshot;
+    }
+    if (entity === 'obligations' && obligationStructureChanged(current, patch)) {
+      const snapshot = await this.obligationSnapshot(auth, current);
+      publicPatch.structure_history = [
+        ...(Array.isArray(current.structure_history) ? current.structure_history : []),
+        { effective_until: timestamp(), snapshot },
+      ];
+    }
+
     const data = {
-      ...publicData(patch),
+      ...publicPatch,
       id: current.id,
       provenance: provenance(auth, 'update', current.provenance),
     };
