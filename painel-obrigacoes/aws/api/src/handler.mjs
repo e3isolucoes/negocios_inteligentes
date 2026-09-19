@@ -4,7 +4,8 @@ import { S3Client } from '@aws-sdk/client-s3';
 import { CognitoIdentityProviderClient } from '@aws-sdk/client-cognito-identity-provider';
 import { authenticate } from './auth.mjs';
 import { createDownloadUrl, createUploadUrl, deleteStoredFile } from './files.mjs';
-import { provisionPortalAccess, verifyPortalProvisioning } from './portal-provisioning.mjs';
+import { claimPortalProvisioningNonce, provisionPortalAccess, verifyPortalProvisioning } from './portal-provisioning.mjs';
+import { resolvePortalIdentity } from './portal-identity.mjs';
 import { consumePortalSession, createPortalSession } from './portal-session.mjs';
 import { Repository } from './repository.mjs';
 import { GenericRepository } from './repository-generic.mjs';
@@ -51,12 +52,24 @@ export async function handler(event) {
     const method = event.requestContext?.http?.method || event.httpMethod;
     const path = (event.rawPath || event.path || '/').replace(/^\/v1\/?/, '');
     if (method === 'POST' && path === 'internal/portal-access') {
-      verifyPortalProvisioning(event, process.env.PORTAL_PROVISIONING_SECRET);
-      const input = parseBody(event);
+      const verified = verifyPortalProvisioning(event, process.env.PORTAL_PROVISIONING_SECRET);
+      await claimPortalProvisioningNonce(ddb, process.env.TABLE_NAME, verified.nonce);
+      const receivedInput = parseBody(event);
+      const input = await resolvePortalIdentity(
+        cognito,
+        ddb,
+        process.env.TABLE_NAME,
+        process.env.USER_POOL_ID,
+        receivedInput,
+      );
       const access = await provisionPortalAccess(ddb, process.env.TABLE_NAME, input);
       const session = await createPortalSession(cognito, ddb, process.env.TABLE_NAME, {
         userPoolId: process.env.USER_POOL_ID, clientId: process.env.USER_POOL_CLIENT_ID,
-      }, { ...access, email: String(input.email).trim().toLowerCase(), displayName: String(input.displayName).trim() });
+      }, {
+        ...access,
+        email: String(input.email).trim().toLowerCase(),
+        displayName: String(input.displayName).trim(),
+      });
       return response(200, { ...access, ...session }, event);
     }
     if (method === 'POST' && path === 'portal-session/exchange') {
