@@ -90,9 +90,9 @@ export const MODULE_REGISTRY = Object.freeze([
 export function getAvailableModules(context = {}) {
   const entitlements = context.entitlements;
 
-  // A aplicação do entitlement será feita pelo motor de permissões da plataforma.
-  // Enquanto ele não for injetado, preservamos o comportamento atual do módulo.
-  if (!(entitlements instanceof Set)) return MODULE_REGISTRY;
+  // Fail closed: sem a lista de contratos ativos carregada, nenhum módulo
+  // aparece no shell. O backend continua sendo a fronteira real de segurança.
+  if (!(entitlements instanceof Set)) return [];
 
   return MODULE_REGISTRY.filter((module) => entitlements.has(module.requiredEntitlement));
 }

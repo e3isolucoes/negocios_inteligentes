@@ -13,8 +13,31 @@ import {
   queryRecordsByModule,
 } from '../src/repository-generic.mjs';
 
-function clientFrom(handler) {
-  return { send: handler };
+function clientFrom(handler, { activeModules = ['obrigacoes', 'crm'] } = {}) {
+  return {
+    send: async (command) => {
+      const key = command.input?.Key;
+      if (command.constructor.name === 'GetCommand' && key?.SK?.startsWith('ENTITLEMENT#')) {
+        const moduleId = key.SK.slice('ENTITLEMENT#'.length);
+        if (!activeModules.includes(moduleId)) return {};
+        const workspaceId = key.PK.slice('WORKSPACE#'.length);
+        return {
+          Item: {
+            PK: key.PK,
+            SK: key.SK,
+            workspace_id: workspaceId,
+            entityType: 'entitlement',
+            moduleId,
+            plan: 'standard',
+            status: 'ativo',
+            startedAt: '2026-09-01T00:00:00.000Z',
+            renewsAt: '2026-10-01T00:00:00.000Z',
+          },
+        };
+      }
+      return handler(command);
+    },
+  };
 }
 
 test('putRecord grava sempre na partição do workspace e prepara GSI de vencimento', async () => {
@@ -165,6 +188,7 @@ test('listRelationsOfRecord filtra outro workspace mesmo consultando RECORD#id d
           workspace_id: 'empresa-a',
           GSIRecordPK: 'RECORD#same-id',
           GSIRecordSK: 'RELATION#related-a',
+          record_module_id: 'crm',
           related_record_id: 'related-a',
         },
         {
@@ -173,13 +197,14 @@ test('listRelationsOfRecord filtra outro workspace mesmo consultando RECORD#id d
           workspace_id: 'empresa-b',
           GSIRecordPK: 'RECORD#same-id',
           GSIRecordSK: 'RELATION#related-b',
+          record_module_id: 'crm',
           related_record_id: 'related-b',
         },
       ],
     };
   }), 'table');
 
-  const result = await repository.listRelationsOfRecord('empresa-a', 'same-id');
+  const result = await repository.listRelationsOfRecord('empresa-a', 'same-id', { moduleId: 'crm' });
 
   assert.equal(query.IndexName, RECORD_LOOKUP_INDEX);
   assert.equal(query.ExpressionAttributeValues[':recordPk'], 'RECORD#same-id');
@@ -282,12 +307,13 @@ test('paginação da GSI nunca expõe chave de outro workspace no cursor', async
         workspace_id: 'empresa-a',
         GSIRecordPK: 'RECORD#same-id',
         GSIRecordSK: 'RELATION#own',
+        record_module_id: 'crm',
         related_record_id: 'own',
       }],
     };
   }), 'table');
 
-  const result = await repository.listRelationsOfRecord('empresa-a', 'same-id');
+  const result = await repository.listRelationsOfRecord('empresa-a', 'same-id', { moduleId: 'crm' });
 
   assert.deepEqual(result.items.map((item) => item.related_record_id), ['own']);
   assert.equal(result.cursor, null);
@@ -306,4 +332,131 @@ test('operações públicas exigidas pelo contrato são exportadas como funçõe
   ]) {
     assert.equal(typeof operation, 'function');
   }
+});
+
+test('RECORD é negado quando o workspace não possui entitlement ativo', async () => {
+  const repository = new GenericRepository(
+    clientFrom(async () => {
+      throw new Error('não deveria acessar RECORD sem entitlement');
+    }, { activeModules: [] }),
+    'table',
+  );
+
+  await assert.rejects(
+    repository.getRecord('empresa-a', 'obrigacoes', 'activity', 'a1'),
+    (error) => error.statusCode === 403,
+  );
+});
+
+test('entitlement genérico persiste contrato comercial no workspace', async () => {
+  let stored;
+  const repository = new GenericRepository({
+    send: async (command) => {
+      stored = command.input.Item;
+      return {};
+    },
+  }, 'table');
+
+  const entitlement = await repository.putEntitlement('empresa-a', {
+    moduleId: 'obrigacoes',
+    plan: 'standard',
+    status: 'ativo',
+    startedAt: '2026-09-01T00:00:00Z',
+    renewsAt: '2026-10-01T00:00:00Z',
+  });
+
+  assert.equal(stored.PK, 'WORKSPACE#empresa-a');
+  assert.equal(stored.SK, 'ENTITLEMENT#obrigacoes');
+  assert.equal(entitlement.moduleId, 'obrigacoes');
+  assert.equal(entitlement.plan, 'standard');
+  assert.equal(entitlement.status, 'ativo');
+});
+
+test('GSI de relações não devolve mesmo recordId pertencente a outro módulo do workspace', async () => {
+  const repository = new GenericRepository(clientFrom(async () => ({
+    Items: [
+      {
+        PK: 'WORKSPACE#empresa-a',
+        SK: 'RELATION#same-id#crm-related',
+        workspace_id: 'empresa-a',
+        record_module_id: 'crm',
+        GSIRecordPK: 'RECORD#same-id',
+        GSIRecordSK: 'RELATION#crm-related',
+        related_record_id: 'crm-related',
+      },
+      {
+        PK: 'WORKSPACE#empresa-a',
+        SK: 'RELATION#same-id#fiscal-related',
+        workspace_id: 'empresa-a',
+        record_module_id: 'obrigacoes',
+        GSIRecordPK: 'RECORD#same-id',
+        GSIRecordSK: 'RELATION#fiscal-related',
+        related_record_id: 'fiscal-related',
+      },
+    ],
+  })), 'table');
+
+  const result = await repository.listRelationsOfRecord(
+    'empresa-a',
+    'same-id',
+    { moduleId: 'crm' },
+  );
+
+  assert.deepEqual(result.items.map((item) => item.related_record_id), ['crm-related']);
+});
+
+test('relatedCompanies é normalizado e permanece dentro do RECORD do workspace dono', async () => {
+  let stored;
+  const repository = new GenericRepository(clientFrom(async (command) => {
+    stored = command.input.Item;
+    return {};
+  }), 'table');
+
+  const record = await repository.putRecord('empresa-a', {
+    moduleId: 'obrigacoes',
+    recordType: 'activity',
+    recordId: 'atividade-1',
+    data: {
+      title: 'Fechamento conjunto',
+      relatedCompanies: [{
+        workspaceId: 'empresa-b',
+        razaoSocial: 'MRSLA Participações Ltda.',
+        cnpj: '12.345.678/0001-90',
+      }],
+    },
+  });
+
+  assert.equal(stored.PK, 'WORKSPACE#empresa-a');
+  assert.equal(stored.SK, 'RECORD#obrigacoes#activity#atividade-1');
+  assert.deepEqual(stored.relatedCompanies, [{
+    workspaceId: 'empresa-b',
+    razaoSocial: 'MRSLA Participações Ltda.',
+    cnpj: '12345678000190',
+  }]);
+  assert.deepEqual(record.relatedCompanies, stored.relatedCompanies);
+});
+
+test('relatedCompanies malformado é rejeitado antes de gravar RECORD', async () => {
+  let writes = 0;
+  const repository = new GenericRepository(clientFrom(async () => {
+    writes += 1;
+    return {};
+  }), 'table');
+
+  await assert.rejects(
+    repository.putRecord('empresa-a', {
+      moduleId: 'obrigacoes',
+      recordType: 'activity',
+      recordId: 'atividade-1',
+      data: {
+        relatedCompanies: [{
+          workspaceId: 'empresa-b',
+          razaoSocial: 'Empresa B',
+          cnpj: '123',
+        }],
+      },
+    }),
+    /cnpj inválido/i,
+  );
+  assert.equal(writes, 0);
 });

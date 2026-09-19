@@ -28,5 +28,9 @@ test('membro autenticado pode criar obrigação no próprio workspace', () => {
 
 test('entidades declaram a fronteira modular aplicada pelo backend', () => {
   assert.equal(entityConfig('obligations').grant, 'obrigacoes');
+  assert.equal(entityConfig('profiles').readGrant, 'obrigacoes');
+  assert.equal(entityConfig('profiles').writeGrant, 'administracao');
+  assert.equal(entityConfig('categories').readGrant, 'obrigacoes');
+  assert.equal(entityConfig('categories').writeGrant, 'administracao');
   assert.equal(entityConfig('audit_log').grant, 'administracao');
 });

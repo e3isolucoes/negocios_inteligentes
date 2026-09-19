@@ -1,5 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import {
+  DeleteCommand,
   GetCommand,
   PutCommand,
   QueryCommand,
@@ -12,8 +13,10 @@ import {
   assertIdentifier,
   assertWorkspaceId,
   dueDateIndexKeys,
+  entitlementSk,
   eventSk,
   normalizeDateOnly,
+  normalizeRelatedCompanies,
   normalizeTimestamp,
   recordSk,
   relationLookupKeys,
@@ -38,6 +41,7 @@ const RESERVED_FIELDS = new Set([
   'relation_id', 'relation_type',
   'related_record_id', 'related_module_id', 'related_record_type',
   'direction', 'created_at', 'updated_at',
+  'relatedCompanies',
 ]);
 
 function safeData(value) {
@@ -77,6 +81,7 @@ function decodeCursor(cursor, expectedScope, { requireWorkspacePk = true } = {})
       scope?.workspaceId !== expectedScope.workspaceId
       || scope?.kind !== expectedScope.kind
       || (expectedScope.recordId && scope?.recordId !== expectedScope.recordId)
+      || (expectedScope.moduleId && scope?.moduleId !== expectedScope.moduleId)
     ) throw new Error('invalid');
     if (requireWorkspacePk && key.PK !== workspacePk(expectedScope.workspaceId)) throw new Error('invalid');
     return key;
@@ -100,6 +105,104 @@ export class GenericRepository {
     this.tableName = tableName;
   }
 
+  async putEntitlement(workspaceId, input = {}) {
+    const workspace = assertWorkspaceId(workspaceId);
+    const moduleId = assertIdentifier(input.moduleId, 'moduleId');
+    const plan = String(input.plan || '').trim();
+    const status = String(input.status || 'ativo').trim();
+    const allowedStatuses = new Set(['ativo', 'suspenso', 'cancelado']);
+    if (!plan || plan.length > 80) {
+      throw Object.assign(new Error('plan inválido.'), { statusCode: 400 });
+    }
+    if (!allowedStatuses.has(status)) {
+      throw Object.assign(new Error('status de entitlement inválido.'), { statusCode: 400 });
+    }
+
+    const startedAt = normalizeTimestamp(input.startedAt || now());
+    if (!input.renewsAt) {
+      throw Object.assign(new Error('renewsAt é obrigatório.'), { statusCode: 400 });
+    }
+    const renewsAt = normalizeTimestamp(input.renewsAt);
+    if (Date.parse(renewsAt) <= Date.parse(startedAt)) {
+      throw Object.assign(new Error('renewsAt deve ser posterior a startedAt.'), { statusCode: 400 });
+    }
+    const item = {
+      PK: workspacePk(workspace),
+      SK: entitlementSk(moduleId),
+      workspace_id: workspace,
+      entityType: 'entitlement',
+      schemaVersion: GENERIC_SCHEMA_VERSION,
+      moduleId,
+      plan,
+      status,
+      startedAt,
+      renewsAt,
+      updatedAt: now(),
+    };
+
+    await this.client.send(new PutCommand({
+      TableName: this.tableName,
+      Item: item,
+    }));
+
+    return withoutInfrastructure(item);
+  }
+
+  async getEntitlement(workspaceId, moduleId) {
+    const workspace = assertWorkspaceId(workspaceId);
+    const module = assertIdentifier(moduleId, 'moduleId');
+    const result = await this.client.send(new GetCommand({
+      TableName: this.tableName,
+      Key: {
+        PK: workspacePk(workspace),
+        SK: entitlementSk(module),
+      },
+      ConsistentRead: true,
+    }));
+
+    const item = result.Item;
+    if (
+      item?.PK !== workspacePk(workspace)
+      || item?.SK !== entitlementSk(module)
+      || item?.workspace_id !== workspace
+      || item?.entityType !== 'entitlement'
+    ) return null;
+
+    return withoutInfrastructure(item);
+  }
+
+  async listEntitlements(workspaceId) {
+    const workspace = assertWorkspaceId(workspaceId);
+    const result = await this.client.send(new QueryCommand({
+      TableName: this.tableName,
+      KeyConditionExpression: 'PK = :pk AND begins_with(SK, :prefix)',
+      ExpressionAttributeValues: {
+        ':pk': workspacePk(workspace),
+        ':prefix': 'ENTITLEMENT#',
+      },
+      ConsistentRead: true,
+    }));
+
+    return (result.Items || [])
+      .filter((item) => (
+        item?.PK === workspacePk(workspace)
+        && item?.workspace_id === workspace
+        && item?.entityType === 'entitlement'
+      ))
+      .map(withoutInfrastructure);
+  }
+
+  async requireActiveEntitlement(workspaceId, moduleId) {
+    const entitlement = await this.getEntitlement(workspaceId, moduleId);
+    if (!entitlement || entitlement.status !== 'ativo') {
+      throw Object.assign(
+        new Error('Módulo não contratado ou indisponível para este workspace.'),
+        { statusCode: 403 },
+      );
+    }
+    return entitlement;
+  }
+
   async putRecord(workspaceId, input) {
     const workspace = assertWorkspaceId(workspaceId);
     const moduleId = assertIdentifier(input?.moduleId, 'moduleId');
@@ -108,6 +211,8 @@ export class GenericRepository {
     const timestamp = now();
     const dueDate = normalizeDateOnly(input?.dueDate);
     const payload = safeData(input?.data);
+    const relatedCompanies = normalizeRelatedCompanies(input?.data?.relatedCompanies);
+    await this.requireActiveEntitlement(workspace, moduleId);
 
     const item = {
       ...payload,
@@ -121,6 +226,7 @@ export class GenericRepository {
       schemaVersion: GENERIC_SCHEMA_VERSION,
       created_at: input?.createdAt ? normalizeTimestamp(input.createdAt) : timestamp,
       updated_at: timestamp,
+      ...(relatedCompanies !== undefined ? { relatedCompanies } : {}),
       ...(dueDate ? {
         due_date: dueDate,
         ...dueDateIndexKeys(workspace, dueDate, recordId),
@@ -138,6 +244,7 @@ export class GenericRepository {
 
   async getRecord(workspaceId, moduleId, recordType, recordId) {
     const workspace = assertWorkspaceId(workspaceId);
+    await this.requireActiveEntitlement(workspace, moduleId);
     const result = await this.client.send(new GetCommand({
       TableName: this.tableName,
       Key: {
@@ -155,9 +262,101 @@ export class GenericRepository {
     return withoutInfrastructure(result.Item);
   }
 
+  async updateRecord(workspaceId, moduleId, recordType, recordId, patch = {}) {
+    const workspace = assertWorkspaceId(workspaceId);
+    await this.requireActiveEntitlement(workspace, moduleId);
+    const key = {
+      PK: workspacePk(workspace),
+      SK: recordSk(moduleId, recordType, recordId),
+    };
+    const result = await this.client.send(new GetCommand({
+      TableName: this.tableName,
+      Key: key,
+      ConsistentRead: true,
+    }));
+    const current = result.Item;
+    if (
+      current?.workspace_id !== workspace
+      || current?.PK !== key.PK
+      || current?.SK !== key.SK
+    ) {
+      throw Object.assign(new Error('Registro não encontrado.'), { statusCode: 404 });
+    }
+
+    const safePatch = safeData(patch.data);
+    const hasRelatedCompanies = Object.hasOwn(patch.data || {}, 'relatedCompanies');
+    const relatedCompanies = hasRelatedCompanies
+      ? normalizeRelatedCompanies(patch.data.relatedCompanies)
+      : undefined;
+    const expectedVersion = Number(patch.expectedVersion ?? current.version ?? 1);
+    if (expectedVersion !== Number(current.version ?? 1)) {
+      throw Object.assign(new Error('O registro foi alterado por outro usuário.'), { statusCode: 409 });
+    }
+
+    const dueDate = patch.dueDate === undefined
+      ? current.due_date
+      : normalizeDateOnly(patch.dueDate);
+
+    const next = {
+      ...current,
+      ...safePatch,
+      version: expectedVersion + 1,
+      updated_at: now(),
+    };
+
+    if (hasRelatedCompanies) {
+      if (relatedCompanies === undefined) delete next.relatedCompanies;
+      else next.relatedCompanies = relatedCompanies;
+    }
+
+    delete next.GSIDueDatePK;
+    delete next.GSIDueDateSK;
+    if (dueDate) {
+      next.due_date = dueDate;
+      Object.assign(next, dueDateIndexKeys(workspace, dueDate, recordId));
+    } else if (patch.dueDate !== undefined) {
+      next.due_date = null;
+    }
+
+    try {
+      await this.client.send(new PutCommand({
+        TableName: this.tableName,
+        Item: next,
+        ConditionExpression: 'attribute_exists(PK) AND attribute_exists(SK) AND (attribute_not_exists(#version) OR #version = :expectedVersion)',
+        ExpressionAttributeNames: { '#version': 'version' },
+        ExpressionAttributeValues: { ':expectedVersion': expectedVersion },
+      }));
+    } catch (error) {
+      if (error?.name === 'ConditionalCheckFailedException') {
+        throw Object.assign(new Error('O registro foi alterado por outro usuário.'), { statusCode: 409 });
+      }
+      throw error;
+    }
+
+    return withoutInfrastructure(next);
+  }
+
+  async deleteRecord(workspaceId, moduleId, recordType, recordId) {
+    const workspace = assertWorkspaceId(workspaceId);
+    const key = {
+      PK: workspacePk(workspace),
+      SK: recordSk(moduleId, recordType, recordId),
+    };
+    const current = await this.getRecord(workspace, moduleId, recordType, recordId);
+    if (!current) return null;
+
+    await this.client.send(new DeleteCommand({
+      TableName: this.tableName,
+      Key: key,
+      ConditionExpression: 'attribute_exists(PK) AND attribute_exists(SK)',
+    }));
+    return current;
+  }
+
   async queryRecordsByModule(workspaceId, moduleId, { recordType, limit = 100, cursor } = {}) {
     const workspace = assertWorkspaceId(workspaceId);
     const module = assertIdentifier(moduleId, 'moduleId');
+    await this.requireActiveEntitlement(workspace, module);
     const prefix = recordType
       ? `RECORD#${module}#${assertIdentifier(recordType, 'recordType')}#`
       : `RECORD#${module}#`;
@@ -196,6 +395,11 @@ export class GenericRepository {
       recordType: assertIdentifier(input?.relatedRecordType || input?.recordType, 'relatedRecordType'),
       recordId: assertIdentifier(input?.relatedRecordId, 'relatedRecordId'),
     };
+
+    await this.requireActiveEntitlement(workspace, source.moduleId);
+    if (target.moduleId !== source.moduleId) {
+      await this.requireActiveEntitlement(workspace, target.moduleId);
+    }
 
     if (source.recordId === target.recordId) {
       throw Object.assign(new Error('Relação reflexiva não é suportada.'), { statusCode: 400 });
@@ -270,12 +474,14 @@ export class GenericRepository {
     return withoutInfrastructure(forward);
   }
 
-  async listRelationsOfRecord(workspaceId, recordId, { limit = 100, cursor } = {}) {
+  async listRelationsOfRecord(workspaceId, recordId, { moduleId, limit = 100, cursor } = {}) {
     const workspace = assertWorkspaceId(workspaceId);
+    const module = assertIdentifier(moduleId, 'moduleId');
+    await this.requireActiveEntitlement(workspace, module);
     const id = assertIdentifier(recordId, 'recordId');
     const pk = workspacePk(workspace);
     const requestedLimit = safeLimit(limit);
-    const scope = { workspaceId: workspace, kind: 'relations', recordId: id };
+    const scope = { workspaceId: workspace, kind: 'relations', recordId: id, moduleId: module };
     let exclusiveStartKey = cursor ? decodeCursor(cursor, scope) : undefined;
     const ownItems = [];
     let hasMoreEvaluatedItems = false;
@@ -285,12 +491,13 @@ export class GenericRepository {
         TableName: this.tableName,
         IndexName: RECORD_LOOKUP_INDEX,
         KeyConditionExpression: 'GSIRecordPK = :recordPk AND begins_with(GSIRecordSK, :relationPrefix)',
-        FilterExpression: 'workspace_id = :workspaceId AND PK = :workspacePk',
+        FilterExpression: 'workspace_id = :workspaceId AND PK = :workspacePk AND record_module_id = :moduleId',
         ExpressionAttributeValues: {
           ':recordPk': `RECORD#${id}`,
           ':relationPrefix': 'RELATION#',
           ':workspaceId': workspace,
           ':workspacePk': pk,
+          ':moduleId': module,
         },
         Limit: 100,
         ExclusiveStartKey: exclusiveStartKey,
@@ -298,7 +505,10 @@ export class GenericRepository {
 
       ownItems.push(
         ...sameWorkspace(result.Items, workspace)
-          .filter((item) => item.GSIRecordPK === `RECORD#${id}`),
+          .filter((item) => (
+            item.GSIRecordPK === `RECORD#${id}`
+            && item.record_module_id === module
+          )),
       );
 
       exclusiveStartKey = result.LastEvaluatedKey;
@@ -417,4 +627,28 @@ export function putEvent(client, tableName, workspaceId, input) {
 
 export function listEventsSince(client, tableName, workspaceId, since, options) {
   return new GenericRepository(client, tableName).listEventsSince(workspaceId, since, options);
+}
+
+export function updateRecord(client, tableName, workspaceId, moduleId, recordType, recordId, patch) {
+  return new GenericRepository(client, tableName).updateRecord(workspaceId, moduleId, recordType, recordId, patch);
+}
+
+export function deleteRecord(client, tableName, workspaceId, moduleId, recordType, recordId) {
+  return new GenericRepository(client, tableName).deleteRecord(workspaceId, moduleId, recordType, recordId);
+}
+
+export function putEntitlement(client, tableName, workspaceId, input) {
+  return new GenericRepository(client, tableName).putEntitlement(workspaceId, input);
+}
+
+export function getEntitlement(client, tableName, workspaceId, moduleId) {
+  return new GenericRepository(client, tableName).getEntitlement(workspaceId, moduleId);
+}
+
+export function listEntitlements(client, tableName, workspaceId) {
+  return new GenericRepository(client, tableName).listEntitlements(workspaceId);
+}
+
+export function requireActiveEntitlement(client, tableName, workspaceId, moduleId) {
+  return new GenericRepository(client, tableName).requireActiveEntitlement(workspaceId, moduleId);
 }
