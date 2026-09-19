@@ -1,5 +1,6 @@
 import {
   STATE, isAdmin, isManager, canViewAllObligations, companyName, lastCompletion, activeOccurrences, checklistProgress,
+  obligationForCompletion, competenceForCompletion, competenceKey, competenceLabel,
 } from '../state.js';
 import { catInfo, moduleInfo, FREQ_LABELS, priorityInfo } from '../constants.js';
 import {
@@ -131,15 +132,20 @@ function filteredCompletionHistory({ onlyMine = false } = {}) {
 
   return STATE.completions
     .filter((completion) => !['rejeitada', 'aguardando_validacao'].includes(completion.status))
-    .map((completion) => ({ completion, ob: obligationsById.get(completion.obligation_id) }))
+    .map((completion) => {
+      const currentObligation = obligationsById.get(completion.obligation_id) || null;
+      return { completion, ob: obligationForCompletion(completion, currentObligation) };
+    })
     .filter(({ completion, ob }) => {
-      if (!ob) return false;
+      if (!ob?.id && !completion?.obligation_id) return false;
       if (STATE.activeModule !== 'all' && (ob.module_key || 'fiscal') !== STATE.activeModule) return false;
       if (restrictToCurrentUser && ob.responsible_id !== STATE.session?.id) return false;
       if (STATE.filters.empresa !== 'all' && ob.company_id !== STATE.filters.empresa) return false;
       if (STATE.filters.category !== 'all' && ob.category !== STATE.filters.category) return false;
       if (STATE.filters.responsible !== 'all' && ob.responsible !== STATE.filters.responsible) return false;
       if (STATE.filters.receipt === 'missing' && completion.attachment_path) return false;
+      const competence = competenceForCompletion(completion, ob);
+      if ((STATE.filters.competence || 'all') !== 'all' && competenceKey(competence) !== STATE.filters.competence) return false;
       return true;
     })
     .sort((a, b) => {
@@ -157,9 +163,12 @@ function renderCompleted(items) {
       const receipt = completion.attachment_path
         ? `<button type="button" class="comment-delete" data-action="view-attachment" data-path="${escapeHtml(completion.attachment_path)}">Ver comprovante</button>`
         : '<span class="completed-no-receipt">Sem comprovante</span>';
+      const competence = competenceForCompletion(completion, ob);
+      const dueDate = fmtBR(new Date(`${completion.occurrence_date}T00:00:00`));
+      const historicalCompanyName = ob.company_name || companyName(ob.company_id);
       return '<article class="completed-item">'
-        + `<span class="completed-check" aria-hidden="true">✓</span><div class="completed-main"><div class="completed-title"><strong>${escapeHtml(ob.name)}</strong><span class="badge" style="border-color:${cat.color};color:${cat.color};">${cat.label}</span></div>`
-        + `<p>${escapeHtml(companyName(ob.company_id) || 'Empresa não informada')} · competência ${fmtBR(new Date(`${completion.occurrence_date}T00:00:00`))}</p></div>`
+        + `<span class="completed-check" aria-hidden="true">✓</span><div class="completed-main"><div class="completed-title"><strong>${escapeHtml(ob.name)}</strong><span class="badge badge-dynamic" style="--badge-color:${cat.color}">${cat.label}</span></div>`
+        + `<p>${escapeHtml(historicalCompanyName || 'Empresa não informada')} · competência ${competenceLabel(competence)} · vencimento ${dueDate}</p></div>`
         + `<div class="completed-meta"><strong>${fmtBR(new Date(completion.done_at))}</strong><span>por ${escapeHtml(completion.done_by_name || 'Não informado')}</span>${receipt}</div>`
         + '</article>';
     }).join('')}</div>`
@@ -193,6 +202,7 @@ export function renderBoard({ onlyMine = false } = {}) {
     if (STATE.filters.status === 'today' && it.status.diffDays !== 0) return false;
     if (STATE.filters.status !== 'all' && STATE.filters.status !== 'today' && it.status.tone !== STATE.filters.status) return false;
     if (STATE.filters.receipt === 'missing' && lastCompletion(it.ob.id)?.attachment_path) return false;
+    if ((STATE.filters.competence || 'all') !== 'all' && competenceKey(it.competence) !== STATE.filters.competence) return false;
     return true;
   });
 
