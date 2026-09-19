@@ -404,6 +404,18 @@ jobs:
                   raise SystemExit(f'Não foi possível substituir {name} no template candidato.')
               return updated
 
+          def upsert_resource(text, name, resource):
+              pattern = re.compile(
+                  rf'^  {re.escape(name)}:\n',
+                  re.MULTILINE,
+              )
+              if pattern.search(text):
+                  return replace_resource(text, name, resource)
+              if '\nOutputs:\n' not in text:
+                  raise SystemExit('Seção Outputs não encontrada para inserir recurso preservado.')
+              block = '\n' + yaml_json_resource(name, resource) + '\n'
+              return text.replace('\nOutputs:\n', block + '\nOutputs:\n', 1)
+
           def build_final():
               text = source
 
@@ -434,7 +446,7 @@ jobs:
               ]
               for name in notification_names:
                   if name in processed_resources:
-                      text = replace_resource(
+                      text = upsert_resource(
                           text,
                           name,
                           copy.deepcopy(processed_resources[name]),
