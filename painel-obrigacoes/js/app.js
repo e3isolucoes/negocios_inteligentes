@@ -137,6 +137,7 @@ function registerServiceWorker() {
 
 async function boot() {
   let passwordRecoveryPending = isPasswordRecoveryUrl();
+  if (window.self !== window.top) document.body.classList.add('embedded-module');
 
   wireModalBackdrop();
   wireMainModuleCompatibility();
