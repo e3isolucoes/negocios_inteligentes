@@ -460,13 +460,43 @@ jobs:
               logical=rc.get('LogicalResourceId')
               action=rc.get('Action')
               rtype=rc.get('ResourceType')
-              print(f'Phase1 change: {action} {logical} {rtype}')
-              if logical != 'DataTable' or action != 'Modify':
-                  unexpected.append((action, logical, rtype))
+              details=rc.get('Details', [])
+              compact=[
+                  {
+                      'target': d.get('Target', {}).get('Name'),
+                      'requiresRecreation': d.get('Target', {}).get('RequiresRecreation'),
+                      'evaluation': d.get('Evaluation'),
+                      'changeSource': d.get('ChangeSource'),
+                      'causingEntity': d.get('CausingEntity'),
+                  }
+                  for d in details
+              ]
+              print(f'Phase1 change: {action} {logical} {rtype} details={json.dumps(compact, sort_keys=True)}')
+
+              if logical == 'DataTable' and action == 'Modify':
+                  continue
+
+              indirect = (
+                  action == 'Modify'
+                  and details
+                  and all(
+                      d.get('Evaluation') == 'Dynamic'
+                      and d.get('ChangeSource') == 'ResourceReference'
+                      and (
+                          d.get('CausingEntity') == 'DataTable'
+                          or str(d.get('CausingEntity', '')).startswith('DataTable.')
+                      )
+                      for d in details
+                  )
+              )
+              if not indirect:
+                  unexpected.append((action, logical, rtype, compact))
+
           if unexpected:
-              print('ALTERAÇÕES INESPERADAS NA FASE 1:', unexpected)
+              print('ALTERAÇÕES DIRETAS/INESPERADAS NA FASE 1:', json.dumps(unexpected, indent=2))
               raise SystemExit(2)
-          print('Guardrail aprovado: fase 1 altera somente DataTable.')
+
+          print('Guardrail aprovado: DataTable é a única mudança direta; demais mudanças são referências dinâmicas causadas por DataTable.')
           PY
 
           aws cloudformation execute-change-set \
