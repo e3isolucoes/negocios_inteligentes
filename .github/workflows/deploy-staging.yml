@@ -161,6 +161,12 @@ jobs:
           aws cloudformation get-template \
             --region "$AWS_REGION" \
             --stack-name "$STACK_NAME" \
+            --template-stage Original \
+            --output json >/tmp/current-original-template.json
+
+          aws cloudformation get-template \
+            --region "$AWS_REGION" \
+            --stack-name "$STACK_NAME" \
             --template-stage Processed \
             --output json >/tmp/current-processed-template.json
 
@@ -170,17 +176,47 @@ jobs:
           import re
           from pathlib import Path
 
+          import yaml
+
           source_path = Path('painel-obrigacoes/aws/template.yaml')
           source = source_path.read_text()
-          payload = json.load(open('/tmp/current-processed-template.json'))
-          body = payload.get('TemplateBody', {})
-          if not isinstance(body, dict):
-              raise SystemExit('TemplateBody processado não retornou objeto JSON.')
 
-          deployed = body.get('Resources', {})
+          class CfnLoader(yaml.SafeLoader):
+              pass
+
+          def construct_cfn(loader, tag_suffix, node):
+              if isinstance(node, yaml.ScalarNode):
+                  value = loader.construct_scalar(node)
+              elif isinstance(node, yaml.SequenceNode):
+                  value = loader.construct_sequence(node)
+              else:
+                  value = loader.construct_mapping(node)
+              if tag_suffix == 'Ref':
+                  return {'Ref': value}
+              if tag_suffix == 'GetAtt' and isinstance(value, str):
+                  value = value.split('.', 1)
+              return {f'Fn::{tag_suffix}': value}
+
+          CfnLoader.add_multi_constructor('!', construct_cfn)
+
+          def read_template(path):
+              payload = json.load(open(path))
+              body = payload.get('TemplateBody', {})
+              if isinstance(body, dict):
+                  return body
+              if isinstance(body, str):
+                  parsed = yaml.load(body, Loader=CfnLoader)
+                  if isinstance(parsed, dict):
+                      return parsed
+              raise SystemExit(f'Não foi possível interpretar TemplateBody de {path}.')
+
+          original = read_template('/tmp/current-original-template.json')
+          processed = read_template('/tmp/current-processed-template.json')
+          deployed = original.get('Resources', {})
+          processed_resources = processed.get('Resources', {})
           for required in ('DataTable', 'FilesBucket'):
               if required not in deployed:
-                  raise SystemExit(f'Recurso implantado obrigatório ausente: {required}')
+                  raise SystemExit(f'Recurso original implantado obrigatório ausente: {required}')
 
           protected = {
               key: value for key, value in deployed.items()
@@ -263,7 +299,9 @@ jobs:
 
           print('Templates de staging preparados.')
           print('Recursos Deletion* preservados:', ', '.join(sorted(protected)))
+          print('Preservação baseada no template Original do stack.')
           print('StreamSpecification preservado:', 'StreamSpecification' in deployed['DataTable'].get('Properties', {}))
+          print('Recursos processados conferidos:', len(processed_resources))
           PY
         working-directory: .
 
