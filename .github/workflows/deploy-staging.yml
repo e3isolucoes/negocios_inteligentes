@@ -633,16 +633,40 @@ jobs:
             --parameters file:///tmp/final-parameters.json \
             --capabilities CAPABILITY_NAMED_IAM CAPABILITY_AUTO_EXPAND
 
+          set +e
           aws cloudformation wait change-set-create-complete \
             --region "$AWS_REGION" \
             --stack-name "$STACK_NAME" \
             --change-set-name "$CHANGE_SET"
+          WAIT_STATUS=$?
+          set -e
 
           aws cloudformation describe-change-set \
             --region "$AWS_REGION" \
             --stack-name "$STACK_NAME" \
             --change-set-name "$CHANGE_SET" \
             --output json >/tmp/final-changeset.json
+
+          if [ "$WAIT_STATUS" -ne 0 ]; then
+            STATUS="$(python - <<'PY'
+          import json
+          data=json.load(open('/tmp/final-changeset.json'))
+          print(data.get('Status',''))
+          PY
+          )"
+            REASON="$(python - <<'PY'
+          import json
+          data=json.load(open('/tmp/final-changeset.json'))
+          print(data.get('StatusReason',''))
+          PY
+          )"
+            if [ "$STATUS" = "FAILED" ] && echo "$REASON" | grep -Eqi "did.?t contain changes|no updates|no changes"; then
+              echo "Change Set final vazio; stack já está no estado desejado."
+              exit 0
+            fi
+            echo "Falha ao criar Change Set final: $STATUS - $REASON"
+            exit 1
+          fi
 
           python - <<'PY'
           import json
