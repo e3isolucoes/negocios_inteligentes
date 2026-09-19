@@ -83,8 +83,51 @@ const obrigacoesModule = buildModule({
   },
 });
 
+const suprimentosModule = buildModule({
+  id: 'suprimentos',
+  name: 'OrçaFácil',
+  shortName: 'Suprimentos',
+  description: 'Estruturação de compras, alternativas, critérios e decisões de suprimentos.',
+  icon: '↗',
+  area: 'suprimentos',
+  requiredEntitlement: 'suprimentos',
+
+  mount(container, context = {}) {
+    if (!container) throw new TypeError('Container obrigatório para montar o módulo suprimentos.');
+
+    container.replaceChildren();
+    container.dataset.moduleId = this.id;
+
+    const loading = document.createElement('div');
+    loading.className = 'module-loading';
+    loading.setAttribute('role', 'status');
+    loading.textContent = `Carregando ${this.name}…`;
+
+    const frame = document.createElement('iframe');
+    frame.className = 'module-frame';
+    frame.title = this.name;
+    frame.loading = 'eager';
+    frame.src = buildModuleUrl('./suprimentos/index.html', context);
+
+    frame.addEventListener('load', () => {
+      loading.classList.add('is-hidden');
+      context.onLoad?.({ module: this, frame });
+    }, { once: true });
+
+    container.append(loading, frame);
+    return frame;
+  },
+
+  unmount(container) {
+    if (!container) return;
+    container.replaceChildren();
+    delete container.dataset.moduleId;
+  },
+});
+
 export const MODULE_REGISTRY = Object.freeze([
   obrigacoesModule,
+  suprimentosModule,
 ]);
 
 export function getAvailableModules(context = {}) {

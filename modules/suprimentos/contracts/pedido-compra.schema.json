@@ -1,0 +1,55 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://e3isolucoes.com.br/contracts/suprimentos/pedido-compra.schema.json",
+  "title": "Pedido de compra — OrçaFácil",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "description"
+  ],
+  "properties": {
+    "description": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 5000
+    },
+    "budget": {
+      "type": "string",
+      "maxLength": 5000
+    },
+    "deadline": {
+      "type": "string",
+      "maxLength": 5000
+    },
+    "location": {
+      "type": "string",
+      "maxLength": 5000
+    },
+    "quantity": {
+      "type": "string",
+      "maxLength": 5000
+    },
+    "preferences": {
+      "type": "string",
+      "maxLength": 5000
+    },
+    "constraints": {
+      "type": "string",
+      "maxLength": 5000
+    },
+    "criteria": {
+      "type": "string",
+      "maxLength": 5000
+    },
+    "alternatives": {
+      "type": "string",
+      "maxLength": 5000
+    }
+  },
+  "x-e3i": {
+    "moduleId": "suprimentos",
+    "recordType": "pedido-compra",
+    "legacySource": "e3isolucoes/gestao-compras@c5c1926e288b446d629c0a1d451aeb4f40c79319",
+    "legacyTable": "analyses"
+  }
+}

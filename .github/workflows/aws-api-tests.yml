@@ -8,6 +8,8 @@ on:
       - 'painel-obrigacoes/css/**'
       - 'painel-obrigacoes/aws/template.yaml'
       - 'modules/obrigacoes/contracts/**'
+      - 'modules/suprimentos/**'
+      - 'suprimentos/**'
       - 'modules/contracts/**'
       - 'modules/registry.js'
       - 'platform/**'

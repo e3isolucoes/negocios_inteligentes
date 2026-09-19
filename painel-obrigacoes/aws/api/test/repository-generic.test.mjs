@@ -460,3 +460,84 @@ test('relatedCompanies malformado é rejeitado antes de gravar RECORD', async ()
   );
   assert.equal(writes, 0);
 });
+
+
+test('GSI-RECORD-LOOKUP retorna obrigação fiscal conectada a pedido de compra', async () => {
+  let forwardRelation = null;
+  let relationQuery = null;
+
+  const repository = new GenericRepository(clientFrom(async (command) => {
+    const name = command.constructor.name;
+
+    if (name === 'GetCommand') {
+      const sk = command.input.Key?.SK;
+      if (sk === 'RECORD#suprimentos#pedido-compra#pedido-150k') {
+        return {
+          Item: {
+            PK: 'WORKSPACE#empresa-a',
+            SK: sk,
+            workspace_id: 'empresa-a',
+            module_id: 'suprimentos',
+            record_type: 'pedido-compra',
+            record_id: 'pedido-150k',
+            valor_total: 150000,
+          },
+        };
+      }
+      if (sk === 'RECORD#obrigacoes#activity#retencao-pedido-150k') {
+        return {
+          Item: {
+            PK: 'WORKSPACE#empresa-a',
+            SK: sk,
+            workspace_id: 'empresa-a',
+            module_id: 'obrigacoes',
+            record_type: 'activity',
+            record_id: 'retencao-pedido-150k',
+            title: 'Declarar retenção fiscal do pedido pedido-150k',
+          },
+        };
+      }
+    }
+
+    if (name === 'TransactWriteCommand') {
+      forwardRelation = command.input.TransactItems[0].Put.Item;
+      return {};
+    }
+
+    if (name === 'QueryCommand') {
+      relationQuery = command.input;
+      return { Items: [forwardRelation] };
+    }
+
+    return {};
+  }, { activeModules: ['suprimentos', 'obrigacoes'] }), 'table');
+
+  await repository.putRelation('empresa-a', {
+    recordModuleId: 'suprimentos',
+    recordType: 'pedido-compra',
+    recordId: 'pedido-150k',
+    relatedModuleId: 'obrigacoes',
+    relatedRecordType: 'activity',
+    relatedRecordId: 'retencao-pedido-150k',
+    relationType: 'gera-obrigacao-fiscal',
+    data: {
+      motivo: 'Pedido de R$ 150.000 sujeito a retenção a declarar',
+      valor_total: 150000,
+    },
+  });
+
+  const connected = await repository.listRelationsOfRecord(
+    'empresa-a',
+    'pedido-150k',
+    { moduleId: 'suprimentos' },
+  );
+
+  assert.equal(relationQuery.IndexName, RECORD_LOOKUP_INDEX);
+  assert.equal(relationQuery.ExpressionAttributeValues[':recordPk'], 'RECORD#pedido-150k');
+  assert.equal(connected.items.length, 1);
+  assert.equal(connected.items[0].relation_type, 'gera-obrigacao-fiscal');
+  assert.equal(connected.items[0].related_module_id, 'obrigacoes');
+  assert.equal(connected.items[0].related_record_type, 'activity');
+  assert.equal(connected.items[0].related_record_id, 'retencao-pedido-150k');
+  assert.equal(connected.items[0].valor_total, 150000);
+});

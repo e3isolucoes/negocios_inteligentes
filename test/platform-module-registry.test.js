@@ -7,8 +7,8 @@ import {
   getModuleById,
 } from '../modules/registry.js';
 
-test('catálogo central possui somente o módulo obrigações', () => {
-  assert.deepEqual(MODULE_REGISTRY.map(({ id }) => id), ['obrigacoes']);
+test('catálogo central registra obrigações e suprimentos', () => {
+  assert.deepEqual(MODULE_REGISTRY.map(({ id }) => id), ['obrigacoes', 'suprimentos']);
 });
 
 test('obrigações implementa o contrato explícito da plataforma', () => {
@@ -22,10 +22,29 @@ test('obrigações implementa o contrato explícito da plataforma', () => {
   assert.equal(typeof module.unmount, 'function');
 });
 
+test('OrçaFácil entra como módulo suprimentos com entitlement próprio', () => {
+  const module = getModuleById('suprimentos', { entitlements: new Set(['suprimentos']) });
+
+  assert.equal(module.id, 'suprimentos');
+  assert.equal(module.name, 'OrçaFácil');
+  assert.equal(module.area, 'suprimentos');
+  assert.equal(module.requiredEntitlement, 'suprimentos');
+  assert.equal(typeof module.mount, 'function');
+  assert.equal(typeof module.unmount, 'function');
+});
+
 test('entitlement filtra o catálogo quando o contexto de permissões é fornecido', () => {
   assert.deepEqual(
     getAvailableModules({ entitlements: new Set(['obrigacoes']) }).map(({ id }) => id),
     ['obrigacoes'],
+  );
+  assert.deepEqual(
+    getAvailableModules({ entitlements: new Set(['suprimentos']) }).map(({ id }) => id),
+    ['suprimentos'],
+  );
+  assert.deepEqual(
+    getAvailableModules({ entitlements: new Set(['obrigacoes', 'suprimentos']) }).map(({ id }) => id),
+    ['obrigacoes', 'suprimentos'],
   );
   assert.deepEqual(
     getAvailableModules({ entitlements: new Set() }).map(({ id }) => id),
