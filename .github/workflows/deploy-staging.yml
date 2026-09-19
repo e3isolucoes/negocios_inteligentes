@@ -150,6 +150,61 @@ jobs:
           echo "Bucket de artefatos temporário: output FilesBucketName (prefixo _sam/staging)"
         working-directory: .
 
+      - name: Recover interrupted CloudFormation rollback
+        env:
+          AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          AWS_SESSION_TOKEN: ${{ secrets.AWS_SESSION_TOKEN }}
+        run: |
+          set -euo pipefail
+
+          STATUS="$(aws cloudformation describe-stacks \
+            --region "$AWS_REGION" \
+            --stack-name "$STACK_NAME" \
+            --query 'Stacks[0].StackStatus' \
+            --output text)"
+
+          if [ "$STATUS" != "UPDATE_ROLLBACK_FAILED" ]; then
+            echo "Stack não requer recuperação: $STATUS"
+            exit 0
+          fi
+
+          echo "Stack em UPDATE_ROLLBACK_FAILED; iniciando continue-update-rollback."
+          aws cloudformation continue-update-rollback \
+            --region "$AWS_REGION" \
+            --stack-name "$STACK_NAME"
+
+          for attempt in $(seq 1 60); do
+            STATUS="$(aws cloudformation describe-stacks \
+              --region "$AWS_REGION" \
+              --stack-name "$STACK_NAME" \
+              --query 'Stacks[0].StackStatus' \
+              --output text)"
+
+            case "$STATUS" in
+              UPDATE_ROLLBACK_COMPLETE)
+                echo "Rollback recuperado com sucesso."
+                exit 0
+                ;;
+              UPDATE_ROLLBACK_FAILED|ROLLBACK_FAILED)
+                echo "Rollback continua em estado de falha: $STATUS"
+                exit 1
+                ;;
+              UPDATE_ROLLBACK_IN_PROGRESS|UPDATE_ROLLBACK_COMPLETE_CLEANUP_IN_PROGRESS)
+                echo "Aguardando recuperação: $STATUS"
+                sleep 10
+                ;;
+              *)
+                echo "Estado inesperado durante recuperação: $STATUS"
+                exit 1
+                ;;
+            esac
+          done
+
+          echo "Timeout aguardando recuperação do rollback."
+          exit 1
+        working-directory: .
+
       - name: Prepare staged compatibility templates
         env:
           AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
