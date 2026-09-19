@@ -150,6 +150,38 @@ jobs:
           echo "Bucket de artefatos temporário: output FilesBucketName (prefixo _sam/staging)"
         working-directory: .
 
+      - name: Protect deployed deletion resources
+        env:
+          AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          AWS_SESSION_TOKEN: ${{ secrets.AWS_SESSION_TOKEN }}
+        run: |
+          set -euo pipefail
+          aws cloudformation get-template \
+            --region "$AWS_REGION" \
+            --stack-name "$STACK_NAME" \
+            --template-stage Processed \
+            --output json >/tmp/current-processed-template.json
+
+          python - <<'PY'
+          import json, sys
+          payload=json.load(open('/tmp/current-processed-template.json'))
+          body=payload.get('TemplateBody', {})
+          if isinstance(body, str):
+              print('TemplateBody processado retornou texto; diagnóstico protegido não pode prosseguir.')
+              sys.exit(2)
+          resources=body.get('Resources', {})
+          protected={k:v for k,v in resources.items() if k.startswith('Deletion')}
+          if protected:
+              print('PROTECTED_DELETION_RESOURCES_BEGIN')
+              print(json.dumps(protected, indent=2, sort_keys=True))
+              print('PROTECTED_DELETION_RESOURCES_END')
+              print('Deploy bloqueado: recursos Deletion* existentes ainda não foram preservados no template candidato.')
+              sys.exit(3)
+          print('Nenhum recurso Deletion* implantado precisa ser preservado.')
+          PY
+        working-directory: .
+
       - name: Deploy existing staging stack
         env:
           AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
