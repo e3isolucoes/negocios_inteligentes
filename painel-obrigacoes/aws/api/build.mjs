@@ -19,5 +19,6 @@ const common = {
 await Promise.all([
   build({ ...common, entryPoints: [resolve(root, 'src/handler.mjs')], outfile: resolve(root, 'dist/handler.js') }),
   build({ ...common, entryPoints: [resolve(root, 'src/notifications.mjs')], outfile: resolve(root, 'dist/notifications.js') }),
-  build({ ...common, entryPoints: [resolve(root, 'src/entitlements.mjs')], outfile: resolve(root, 'dist/entitlements.js') })
+  build({ ...common, entryPoints: [resolve(root, 'src/entitlements.mjs')], outfile: resolve(root, 'dist/entitlements.js') }),
+  build({ ...common, entryPoints: [resolve(root, 'src/pre-token-generation.mjs')], outfile: resolve(root, 'dist/pre-token-generation.js') })
 ]);

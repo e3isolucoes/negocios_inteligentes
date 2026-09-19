@@ -195,6 +195,35 @@
           "type": "string"
         }
       }
+    },
+    "relatedCompanies": {
+      "type": "array",
+      "maxItems": 50,
+      "description": "Empresas apenas informativas relacionadas ao registro. Não concede membership, entitlement nem acesso ao workspace citado.",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "workspaceId",
+          "razaoSocial",
+          "cnpj"
+        ],
+        "properties": {
+          "workspaceId": {
+            "type": "string",
+            "pattern": "^[a-zA-Z0-9_-]{1,80}$"
+          },
+          "razaoSocial": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 180
+          },
+          "cnpj": {
+            "type": "string",
+            "pattern": "^[0-9]{14}$"
+          }
+        }
+      }
     }
   },
   "additionalProperties": true

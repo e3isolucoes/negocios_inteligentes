@@ -21,7 +21,9 @@ function attributeMap(attributes = []) {
   return Object.fromEntries(attributes.map(({ Name, Value }) => [Name, Value]));
 }
 
-async function ensureCognitoUser(cognito, { userPoolId, email, userId, displayName }) {
+async function ensureCognitoUser(cognito, {
+  userPoolId, email, userId, displayName, workspaceId,
+}) {
   let current;
   try {
     current = await cognito.send(new AdminGetUserCommand({ UserPoolId: userPoolId, Username: email }));
@@ -36,6 +38,7 @@ async function ensureCognitoUser(cognito, { userPoolId, email, userId, displayNa
         { Name: 'email_verified', Value: 'true' },
         { Name: 'name', Value: displayName },
         { Name: 'custom:legacy_user_id', Value: userId },
+        { Name: 'custom:active_workspace_id', Value: workspaceId },
       ],
     }));
     return;
@@ -47,6 +50,7 @@ async function ensureCognitoUser(cognito, { userPoolId, email, userId, displayNa
   const updates = [
     { Name: 'email_verified', Value: 'true' },
     { Name: 'name', Value: displayName },
+    { Name: 'custom:active_workspace_id', Value: workspaceId },
   ];
   if (!attributes['custom:legacy_user_id']) updates.push({ Name: 'custom:legacy_user_id', Value: userId });
   await cognito.send(new AdminUpdateUserAttributesCommand({ UserPoolId: userPoolId, Username: email, UserAttributes: updates }));

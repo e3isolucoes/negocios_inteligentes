@@ -404,3 +404,59 @@ test('GSI de relações não devolve mesmo recordId pertencente a outro módulo 
 
   assert.deepEqual(result.items.map((item) => item.related_record_id), ['crm-related']);
 });
+
+test('relatedCompanies é normalizado e permanece dentro do RECORD do workspace dono', async () => {
+  let stored;
+  const repository = new GenericRepository(clientFrom(async (command) => {
+    stored = command.input.Item;
+    return {};
+  }), 'table');
+
+  const record = await repository.putRecord('empresa-a', {
+    moduleId: 'obrigacoes',
+    recordType: 'activity',
+    recordId: 'atividade-1',
+    data: {
+      title: 'Fechamento conjunto',
+      relatedCompanies: [{
+        workspaceId: 'empresa-b',
+        razaoSocial: 'MRSLA Participações Ltda.',
+        cnpj: '12.345.678/0001-90',
+      }],
+    },
+  });
+
+  assert.equal(stored.PK, 'WORKSPACE#empresa-a');
+  assert.equal(stored.SK, 'RECORD#obrigacoes#activity#atividade-1');
+  assert.deepEqual(stored.relatedCompanies, [{
+    workspaceId: 'empresa-b',
+    razaoSocial: 'MRSLA Participações Ltda.',
+    cnpj: '12345678000190',
+  }]);
+  assert.deepEqual(record.relatedCompanies, stored.relatedCompanies);
+});
+
+test('relatedCompanies malformado é rejeitado antes de gravar RECORD', async () => {
+  let writes = 0;
+  const repository = new GenericRepository(clientFrom(async () => {
+    writes += 1;
+    return {};
+  }), 'table');
+
+  await assert.rejects(
+    repository.putRecord('empresa-a', {
+      moduleId: 'obrigacoes',
+      recordType: 'activity',
+      recordId: 'atividade-1',
+      data: {
+        relatedCompanies: [{
+          workspaceId: 'empresa-b',
+          razaoSocial: 'Empresa B',
+          cnpj: '123',
+        }],
+      },
+    }),
+    /cnpj inválido/i,
+  );
+  assert.equal(writes, 0);
+});
