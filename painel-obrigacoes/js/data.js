@@ -27,7 +27,7 @@ import {
 import { createUserAccount, isAwsAdminBackend, removeUserMembership, updateUserMembership } from './api/adminUsers.js';
 import { signOut, sendPasswordResetEmail, fetchMyProfile } from './api/auth.js';
 import { uploadAttachment } from './api/storage.js';
-import { completeDialog } from './ui/completeDialog.js?v=20260908-csp-wasm-v2';
+import { completeDialog } from './ui/completeDialog.js?v=20260919-consolidated-v1';
 import { overrideDialog } from './ui/overrideDialog.js';
 import { applyRuleDialog } from './ui/applyRuleDialog.js';
 import { regimeDialog } from './ui/regimeDialog.js';
@@ -145,16 +145,8 @@ export async function refreshObligationsAndCompletions() {
 export async function doMarkDone(obligationId, onDone) {
   const ob = STATE.obligations.find((o) => o.id === obligationId);
   if (!ob) return;
-  // Administradores podem concluir o próprio envio diretamente. A mesma
-  // exceção é aplicada pelo trigger no banco, que é a fonte de verdade.
-  if (ob.requires_validation && !ob.validator_id && !isAdmin()) {
-    showToast('A Gestão precisa definir quem validará esta tarefa antes do envio.', 'error');
-    return;
-  }
-  if (ob.requires_validation && ob.validator_id === STATE.session?.id && !isAdmin()) {
-    showToast('Quem executa a tarefa não pode validar o próprio trabalho.', 'error');
-    return;
-  }
+  // Requisitos de validação são exibidos dentro do painel de prontidão.
+  // Assim a pessoa sempre entende o bloqueio e quem precisa agir.
   const completionsByObligation = new Map(
     STATE.completions
       .filter((c) => c.obligation_id === obligationId)
@@ -170,13 +162,22 @@ export async function doMarkDone(obligationId, onDone) {
   // Checklist (se houver) e, quando configurado, comprovante são exigidos
   // ANTES da conclusão ser gravada — ao cancelar, nada é salvo.
   let checklistItems = [];
+  let checklistUnavailable = false;
   try {
     checklistItems = await fetchChecklistItems(obligationId);
   } catch (err) {
-    console.error('Falha ao carregar checklist, seguindo sem ele', err);
+    checklistUnavailable = true;
+    console.error('Falha ao carregar checklist da conclusão', err);
   }
 
   const occurrenceDate = fmtKey(active);
+  const validationRequired = Boolean(ob.requires_validation && !isAdmin());
+  const validatorProfile = ob.validator_id
+    ? STATE.profiles.find((profile) => profile.id === ob.validator_id)
+    : null;
+  const validatorLabel = validatorProfile?.display_name || validatorProfile?.email || '';
+  const validatorReady = !validationRequired
+    || (Boolean(ob.validator_id) && ob.validator_id !== STATE.session?.id);
   // Cada item já mostra o estado marcado/desmarcado persistido (quem foi
   // riscando o checklist ao longo do período, direto no cartão do Painel,
   // já chega aqui com tudo pronto). Marcar/desmarcar dentro do próprio
@@ -187,6 +188,10 @@ export async function doMarkDone(obligationId, onDone) {
     requiresAttachment: ob.requires_attachment !== false,
     allowsNoMovementWithoutAttachment: ob.activity_type === 'obrigacao_acessoria'
       && ob.requires_attachment_no_movement === false,
+    validationRequired,
+    validatorReady,
+    validatorLabel,
+    checklistUnavailable,
     onToggleItem: (itemId, checkedVal) => {
       toggleChecklistItem(itemId, checkedVal)
         .then((updated) => {
@@ -248,14 +253,14 @@ export async function doMarkDone(obligationId, onDone) {
     }
   } catch (err) {
     console.error(err);
-    if (err.code === '23505') {
-      showToast('Alguém já registrou essa conclusão agora há pouco. Atualizando o painel…', 'info');
+    const status = Number(err?.status || err?.statusCode || 0);
+    if (err.code === '23505' || status === 409) {
+      showToast('Esta atividade já foi concluída por outra pessoa. Atualizando o painel…', 'info');
       await refreshObligationsAndCompletions();
+    } else if (status >= 400 && status < 500) {
+      showToast(err?.message || 'Seu acesso não permite concluir esta atividade neste momento.', 'error');
     } else {
-      const detail = Number(err?.status) >= 400 && Number(err?.status) < 500 && err?.message
-        ? ` Motivo: ${err.message}`
-        : ' Tente novamente.';
-      showToast(`Não foi possível salvar a conclusão.${detail}`, 'error');
+      showToast('Não foi possível salvar a conclusão. Verifique sua conexão e tente novamente.', 'error');
     }
   } finally {
     onDone?.();
