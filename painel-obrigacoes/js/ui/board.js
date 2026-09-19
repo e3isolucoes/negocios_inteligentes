@@ -1,5 +1,6 @@
 import {
-  STATE, isAdmin, isManager, canViewAllObligations, companyName, lastCompletion, activeOccurrences, checklistProgress,
+  STATE, isAdmin, canWriteObligations, canViewAllObligations, companyName, lastCompletion, activeOccurrences, checklistProgress,
+  obligationForCompletion, competenceForCompletion, competenceKey, competenceLabel,
 } from '../state.js';
 import { catInfo, moduleInfo, FREQ_LABELS, priorityInfo } from '../constants.js';
 import {
@@ -46,19 +47,22 @@ export function renderStats(items) {
 
 function renderCard(it) {
   const {
-    ob, active, displayDate, override, status: st,
+    ob, active, displayDate, override, status: st, competence,
   } = it;
   const cat = catInfo(ob.category);
   const module = moduleInfo(ob.module_key || 'fiscal');
   const dueLabel = displayDate ? fmtBR(displayDate) : '—';
+  const competenceText = competenceLabel(competence);
   const deltaTxt = displayDate ? deltaLabel(st.diffDays) : 'sem ocorrência prevista';
   const deadlineHtml = '<div class="card-deadline">'
     + '<div><span class="card-detail-label">Vencimento</span>'
       + `<strong class="due-date">${dueLabel}</strong></div>`
+    + '<div><span class="card-detail-label">Competência</span>'
+      + `<strong class="due-date">${competenceText}</strong></div>`
     + `<span class="due-delta tone-${st.tone}">${deltaTxt}</span>`
   + '</div>';
   const overrideNote = override
-    ? `<div class="card-meta" style="color:var(--amber);">📌 Data ajustada manualmente (padrão seria ${fmtBR(active)})${override.reason ? ` — ${escapeHtml(override.reason)}` : ''}</div>`
+    ? `<div class="card-meta card-meta-warning">📌 Data ajustada manualmente (padrão seria ${fmtBR(active)})${override.reason ? ` — ${escapeHtml(override.reason)}` : ''}</div>`
     : '';
 
   const last = lastCompletion(ob.id);
@@ -90,7 +94,7 @@ function renderCard(it) {
   } else {
     actionsHtml += '<button class="btn-sm" disabled>Sem pendência ativa</button>';
   }
-  if (isManager()) {
+  if (canWriteObligations()) {
     actionsHtml += `<button class="btn-sm edit" data-action="edit" data-id="${ob.id}">Editar</button>`;
   }
   actionsHtml += '</div>';
@@ -98,10 +102,10 @@ function renderCard(it) {
   return '<details class="card obligation-card">'
     + '<summary class="obligation-card-summary">'
     + '<div class="card-top">'
-      + '<div style="display:flex;gap:6px;flex-wrap:wrap;">'
-        + `<span class="badge" style="border-color:${module.color};color:${module.color};">${module.label}</span>`
-        + `${ob.activity_type === 'obrigacao_acessoria' || !ob.activity_type ? `<span class="badge" style="border-color:${cat.color};color:${cat.color};">${cat.label}</span>` : ''}`
-        + (ob.priority === 'critica' || ob.priority === 'alta' ? `<span class="badge" style="border-color:var(--red);color:var(--red);" title="Prioridade ${priorityInfo(ob.priority).label}">${ob.priority === 'critica' ? '🔥 Crítica' : '⚠ Alta'}</span>` : '')
+      + '<div class="card-tag-row">'
+        + `<span class="badge badge-dynamic" style="--badge-color:${module.color}">${module.label}</span>`
+        + `${ob.activity_type === 'obrigacao_acessoria' || !ob.activity_type ? `<span class="badge badge-dynamic" style="--badge-color:${cat.color}">${cat.label}</span>` : ''}`
+        + (ob.priority === 'critica' || ob.priority === 'alta' ? `<span class="badge badge-danger" title="Prioridade ${priorityInfo(ob.priority).label}">${ob.priority === 'critica' ? '🔥 Crítica' : '⚠ Alta'}</span>` : '')
       + '</div>'
       + `<span class="status-pill tone-${st.tone}">${st.label}</span>`
     + '</div>'
@@ -131,15 +135,20 @@ function filteredCompletionHistory({ onlyMine = false } = {}) {
 
   return STATE.completions
     .filter((completion) => !['rejeitada', 'aguardando_validacao'].includes(completion.status))
-    .map((completion) => ({ completion, ob: obligationsById.get(completion.obligation_id) }))
+    .map((completion) => {
+      const currentObligation = obligationsById.get(completion.obligation_id) || null;
+      return { completion, ob: obligationForCompletion(completion, currentObligation), currentObligation };
+    })
     .filter(({ completion, ob }) => {
-      if (!ob) return false;
+      if (!ob?.id && !completion?.obligation_id) return false;
       if (STATE.activeModule !== 'all' && (ob.module_key || 'fiscal') !== STATE.activeModule) return false;
       if (restrictToCurrentUser && ob.responsible_id !== STATE.session?.id) return false;
-      if (STATE.filters.empresa !== 'all' && ob.company_id !== STATE.filters.empresa) return false;
-      if (STATE.filters.category !== 'all' && ob.category !== STATE.filters.category) return false;
-      if (STATE.filters.responsible !== 'all' && ob.responsible !== STATE.filters.responsible) return false;
-      if (STATE.filters.receipt === 'missing' && completion.attachment_path) return false;
+      if ((STATE.filters.empresa || 'all') !== 'all' && ob.company_id !== STATE.filters.empresa) return false;
+      if ((STATE.filters.category || 'all') !== 'all' && ob.category !== STATE.filters.category) return false;
+      if ((STATE.filters.responsible || 'all') !== 'all' && ob.responsible !== STATE.filters.responsible) return false;
+      if ((STATE.filters.receipt || 'all') === 'missing' && completion.attachment_path) return false;
+      const competence = competenceForCompletion(completion, ob);
+      if ((STATE.filters.competence || 'all') !== 'all' && competenceKey(competence) !== STATE.filters.competence) return false;
       return true;
     })
     .sort((a, b) => {
@@ -157,9 +166,12 @@ function renderCompleted(items) {
       const receipt = completion.attachment_path
         ? `<button type="button" class="comment-delete" data-action="view-attachment" data-path="${escapeHtml(completion.attachment_path)}">Ver comprovante</button>`
         : '<span class="completed-no-receipt">Sem comprovante</span>';
+      const competence = competenceForCompletion(completion, ob);
+      const dueDate = fmtBR(new Date(`${completion.occurrence_date}T00:00:00`));
+      const historicalCompanyName = ob.company_name || companyName(ob.company_id);
       return '<article class="completed-item">'
-        + `<span class="completed-check" aria-hidden="true">✓</span><div class="completed-main"><div class="completed-title"><strong>${escapeHtml(ob.name)}</strong><span class="badge" style="border-color:${cat.color};color:${cat.color};">${cat.label}</span></div>`
-        + `<p>${escapeHtml(companyName(ob.company_id) || 'Empresa não informada')} · competência ${fmtBR(new Date(`${completion.occurrence_date}T00:00:00`))}</p></div>`
+        + `<span class="completed-check" aria-hidden="true">✓</span><div class="completed-main"><div class="completed-title"><strong>${escapeHtml(ob.name)}</strong><span class="badge badge-dynamic" style="--badge-color:${cat.color}">${cat.label}</span></div>`
+        + `<p>${escapeHtml(historicalCompanyName || 'Empresa não informada')} · competência ${competenceLabel(competence)} · vencimento ${dueDate}</p></div>`
         + `<div class="completed-meta"><strong>${fmtBR(new Date(completion.done_at))}</strong><span>por ${escapeHtml(completion.done_by_name || 'Não informado')}</span>${receipt}</div>`
         + '</article>';
     }).join('')}</div>`
@@ -187,18 +199,19 @@ export function renderBoard({ onlyMine = false } = {}) {
     if (!it.active && last && !['rejeitada', 'aguardando_validacao'].includes(last.status)) return false;
     if (restrictToCurrentUser && it.ob.responsible_id !== STATE.session?.id) return false;
     if (STATE.activeModule !== 'all' && (it.ob.module_key || 'fiscal') !== STATE.activeModule) return false;
-    if (STATE.filters.empresa !== 'all' && it.ob.company_id !== STATE.filters.empresa) return false;
-    if (STATE.filters.category !== 'all' && it.ob.category !== STATE.filters.category) return false;
-    if (STATE.filters.responsible !== 'all' && it.ob.responsible !== STATE.filters.responsible) return false;
-    if (STATE.filters.status === 'today' && it.status.diffDays !== 0) return false;
-    if (STATE.filters.status !== 'all' && STATE.filters.status !== 'today' && it.status.tone !== STATE.filters.status) return false;
-    if (STATE.filters.receipt === 'missing' && lastCompletion(it.ob.id)?.attachment_path) return false;
+    if ((STATE.filters.empresa || 'all') !== 'all' && it.ob.company_id !== STATE.filters.empresa) return false;
+    if ((STATE.filters.category || 'all') !== 'all' && it.ob.category !== STATE.filters.category) return false;
+    if ((STATE.filters.responsible || 'all') !== 'all' && it.ob.responsible !== STATE.filters.responsible) return false;
+    if ((STATE.filters.status || 'all') === 'today' && it.status.diffDays !== 0) return false;
+    if ((STATE.filters.status || 'all') !== 'all' && STATE.filters.status !== 'today' && it.status.tone !== STATE.filters.status) return false;
+    if ((STATE.filters.receipt || 'all') === 'missing' && lastCompletion(it.ob.id)?.attachment_path) return false;
+    if ((STATE.filters.competence || 'all') !== 'all' && competenceKey(it.competence) !== STATE.filters.competence) return false;
     return true;
   });
 
   const overviewHtml = renderAtAGlance(items, restrictToCurrentUser);
   const statsHtml = renderStats(items);
-  const completedHtml = STATE.filters.status === 'all'
+  const completedHtml = (STATE.filters.status || 'all') === 'all'
     ? renderCompleted(filteredCompletionHistory({ onlyMine })) : '';
 
   if (!items.length) {
