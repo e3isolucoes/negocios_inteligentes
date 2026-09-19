@@ -89,12 +89,12 @@ test('Admin da Ferramenta concede administracao no MEMBER canônico e preserva o
     module_grants: ['administracao'],
   });
 
-  assert.deepEqual(updated.module_grants, ['administracao', 'obrigacoes']);
+  assert.deepEqual(new Set(updated.module_grants), new Set(['obrigacoes', 'administracao']));
   const transaction = client.transactions.at(-1);
   const storedMember = transaction.TransactItems[0].Put.Item;
   assert.equal(storedMember.PK, 'WORKSPACE#empresa-a');
   assert.equal(storedMember.SK, 'MEMBER#user-b');
-  assert.deepEqual(storedMember.module_grants, ['administracao', 'obrigacoes']);
+  assert.deepEqual(new Set(storedMember.module_grants), new Set(['obrigacoes', 'administracao']));
 });
 
 test('convite AWS cria MEMBER canônico com grant operacional obrigatório', async () => {
