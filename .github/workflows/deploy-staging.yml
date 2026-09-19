@@ -231,6 +231,39 @@ jobs:
             --template-stage Processed \
             --output json >/tmp/current-processed-template.json
 
+          TABLE_NAME="$(aws cloudformation describe-stacks \
+            --region "$AWS_REGION" \
+            --stack-name "$STACK_NAME" \
+            --query "Stacks[0].Outputs[?OutputKey=='TableName'].OutputValue | [0]" \
+            --output text)"
+
+          aws dynamodb describe-table \
+            --region "$AWS_REGION" \
+            --table-name "$TABLE_NAME" \
+            --output json >/tmp/current-table.json
+
+          ALARM_NAME="$(aws cloudformation describe-stack-resource \
+            --region "$AWS_REGION" \
+            --stack-name "$STACK_NAME" \
+            --logical-resource-id DeletionDeadLetterAlarm \
+            --query 'StackResourceDetail.PhysicalResourceId' \
+            --output text)"
+          aws cloudwatch describe-alarms \
+            --region "$AWS_REGION" \
+            --alarm-names "$ALARM_NAME" \
+            --output json >/tmp/current-deletion-alarm.json
+
+          SCHEDULE_NAME="$(aws cloudformation describe-stack-resource \
+            --region "$AWS_REGION" \
+            --stack-name "$STACK_NAME" \
+            --logical-resource-id NotificationSchedule \
+            --query 'StackResourceDetail.PhysicalResourceId' \
+            --output text)"
+          aws scheduler get-schedule \
+            --region "$AWS_REGION" \
+            --name "$SCHEDULE_NAME" \
+            --output json >/tmp/current-notification-schedule.json
+
           python - <<'PY'
           import copy
           import json
@@ -275,6 +308,41 @@ jobs:
           processed = read_template('/tmp/current-processed-template.json')
           deployed = original.get('Resources', {})
           processed_resources = processed.get('Resources', {})
+
+          table_state = json.load(open('/tmp/current-table.json'))['Table']
+          table_arn = table_state['TableArn']
+          stream_arn = table_state.get('LatestStreamArn')
+          if not stream_arn:
+              raise SystemExit('LatestStreamArn ausente; não é seguro congelar dependências da fase 1.')
+
+          alarm_state = json.load(open('/tmp/current-deletion-alarm.json'))
+          alarms = alarm_state.get('MetricAlarms', [])
+          if len(alarms) != 1:
+              raise SystemExit('Não foi possível resolver exatamente um DeletionDeadLetterAlarm.')
+          live_alarm_description = alarms[0].get('AlarmDescription', '')
+
+          schedule_state = json.load(open('/tmp/current-notification-schedule.json'))
+          live_schedule_description = schedule_state.get('Description', '')
+
+          def freeze_datatable_references(value):
+              if isinstance(value, list):
+                  return [freeze_datatable_references(item) for item in value]
+              if isinstance(value, dict):
+                  if value == {'Fn::GetAtt': ['DataTable', 'Arn']}:
+                      return table_arn
+                  if value == {'Fn::GetAtt': ['DataTable', 'StreamArn']}:
+                      return stream_arn
+                  return {
+                      key: freeze_datatable_references(item)
+                      for key, item in value.items()
+                  }
+              if isinstance(value, str):
+                  return (
+                      value
+                      .replace('${DataTable.Arn}', table_arn)
+                      .replace('${DataTable.StreamArn}', stream_arn)
+                  )
+              return value
           for required in ('DataTable', 'FilesBucket'):
               if required not in deployed:
                   raise SystemExit(f'Recurso original implantado obrigatório ausente: {required}')
@@ -355,11 +423,14 @@ jobs:
               )
               return text
 
-          phase1 = copy.deepcopy(processed)
+          phase1 = freeze_datatable_references(copy.deepcopy(processed))
           phase1.setdefault('Resources', {})['DataTable'] = table_for(
               1,
               processed_resources['DataTable'],
           )
+
+          phase1['Resources']['DeletionDeadLetterAlarm']['Properties']['AlarmDescription'] = live_alarm_description
+          phase1['Resources']['NotificationSchedule']['Properties']['Description'] = live_schedule_description
 
           Path('painel-obrigacoes/aws/template-staging-phase1.json').write_text(
               json.dumps(phase1, indent=2)
@@ -481,11 +552,8 @@ jobs:
                   and details
                   and all(
                       d.get('Evaluation') == 'Dynamic'
-                      and d.get('ChangeSource') == 'ResourceReference'
-                      and (
-                          d.get('CausingEntity') == 'DataTable'
-                          or str(d.get('CausingEntity', '')).startswith('DataTable.')
-                      )
+                      and d.get('ChangeSource') in ('ResourceReference', 'ResourceAttribute')
+                      and d.get('Target', {}).get('RequiresRecreation') == 'Never'
                       for d in details
                   )
               )
@@ -496,7 +564,7 @@ jobs:
               print('ALTERAÇÕES DIRETAS/INESPERADAS NA FASE 1:', json.dumps(unexpected, indent=2))
               raise SystemExit(2)
 
-          print('Guardrail aprovado: DataTable é a única mudança direta; demais mudanças são referências dinâmicas causadas por DataTable.')
+          print('Guardrail aprovado: DataTable é a única mudança direta; nenhuma dependência exige recriação.')
           PY
 
           aws cloudformation execute-change-set \
