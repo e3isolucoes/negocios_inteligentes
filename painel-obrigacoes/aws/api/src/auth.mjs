@@ -153,8 +153,12 @@ export function requireRole(auth, roles) {
 }
 
 export function requireModuleGrant(auth, grant) {
-  if (!Array.isArray(auth.moduleGrants)) return;
-  if (!auth.moduleGrants.includes(grant)) {
+  // Compatibilidade operacional: vínculos legados continuam podendo usar
+  // Obrigações enquanto o bootstrap de grants é concluído.
+  if (!grant || grant === 'obrigacoes') return;
+  if (['admin', 'super_admin'].includes(auth?.role)) return;
+  // Capacidades administrativas são sempre deny-by-default.
+  if (!Array.isArray(auth?.moduleGrants) || !auth.moduleGrants.includes(grant)) {
     throw Object.assign(new Error('Módulo não concedido para este acesso.'), { statusCode: 403 });
   }
 }
