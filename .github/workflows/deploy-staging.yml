@@ -150,13 +150,14 @@ jobs:
           echo "Bucket de artefatos temporário: output FilesBucketName (prefixo _sam/staging)"
         working-directory: .
 
-      - name: Protect deployed deletion resources
+      - name: Prepare staged compatibility templates
         env:
           AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
           AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
           AWS_SESSION_TOKEN: ${{ secrets.AWS_SESSION_TOKEN }}
         run: |
           set -euo pipefail
+
           aws cloudformation get-template \
             --region "$AWS_REGION" \
             --stack-name "$STACK_NAME" \
@@ -164,22 +165,159 @@ jobs:
             --output json >/tmp/current-processed-template.json
 
           python - <<'PY'
-          import json, sys
-          payload=json.load(open('/tmp/current-processed-template.json'))
-          body=payload.get('TemplateBody', {})
-          if isinstance(body, str):
-              print('TemplateBody processado retornou texto; diagnóstico protegido não pode prosseguir.')
-              sys.exit(2)
-          resources=body.get('Resources', {})
-          protected={k:v for k,v in resources.items() if k.startswith('Deletion')}
-          if protected:
-              print('PROTECTED_DELETION_RESOURCES_BEGIN')
-              print(json.dumps(protected, indent=2, sort_keys=True))
-              print('PROTECTED_DELETION_RESOURCES_END')
-              print('Deploy bloqueado: recursos Deletion* existentes ainda não foram preservados no template candidato.')
-              sys.exit(3)
-          print('Nenhum recurso Deletion* implantado precisa ser preservado.')
+          import copy
+          import json
+          import re
+          from pathlib import Path
+
+          source_path = Path('painel-obrigacoes/aws/template.yaml')
+          source = source_path.read_text()
+          payload = json.load(open('/tmp/current-processed-template.json'))
+          body = payload.get('TemplateBody', {})
+          if not isinstance(body, dict):
+              raise SystemExit('TemplateBody processado não retornou objeto JSON.')
+
+          deployed = body.get('Resources', {})
+          for required in ('DataTable', 'FilesBucket'):
+              if required not in deployed:
+                  raise SystemExit(f'Recurso implantado obrigatório ausente: {required}')
+
+          protected = {
+              key: value for key, value in deployed.items()
+              if key.startswith('Deletion')
+          }
+          if not protected:
+              raise SystemExit('Nenhum recurso Deletion* encontrado no stack atual; abortando por segurança.')
+
+          def ensure_attribute(table, name):
+              attrs = table['Properties'].setdefault('AttributeDefinitions', [])
+              if not any(item.get('AttributeName') == name for item in attrs):
+                  attrs.append({'AttributeName': name, 'AttributeType': 'S'})
+
+          def ensure_gsi(table, name, hash_key, range_key):
+              gsis = table['Properties'].setdefault('GlobalSecondaryIndexes', [])
+              if any(item.get('IndexName') == name for item in gsis):
+                  return
+              gsis.append({
+                  'IndexName': name,
+                  'KeySchema': [
+                      {'AttributeName': hash_key, 'KeyType': 'HASH'},
+                      {'AttributeName': range_key, 'KeyType': 'RANGE'},
+                  ],
+                  'Projection': {'ProjectionType': 'ALL'},
+                  'ProvisionedThroughput': {
+                      'ReadCapacityUnits': 1,
+                      'WriteCapacityUnits': 1,
+                  },
+              })
+
+          def table_for(phase):
+              table = copy.deepcopy(deployed['DataTable'])
+              # Preserve every deployed table property, especially StreamSpecification.
+              ensure_attribute(table, 'GSIRecordPK')
+              ensure_attribute(table, 'GSIRecordSK')
+              ensure_gsi(table, 'GSI-RECORD-LOOKUP', 'GSIRecordPK', 'GSIRecordSK')
+              if phase == 2:
+                  ensure_attribute(table, 'GSIDueDatePK')
+                  ensure_attribute(table, 'GSIDueDateSK')
+                  ensure_gsi(table, 'GSI-DUEDATE', 'GSIDueDatePK', 'GSIDueDateSK')
+              return table
+
+          def yaml_json_resource(name, resource):
+              encoded = json.dumps(resource, indent=2, separators=(',', ': '))
+              lines = encoded.splitlines()
+              return '  ' + name + ': ' + lines[0] + '\n' + '\n'.join('  ' + line for line in lines[1:])
+
+          def replace_resource(text, name, resource):
+              pattern = re.compile(
+                  rf'^  {re.escape(name)}:\n.*?(?=^  [A-Za-z0-9][A-Za-z0-9]*:\n|^Outputs:\n)',
+                  re.MULTILINE | re.DOTALL,
+              )
+              block = yaml_json_resource(name, resource) + '\n\n'
+              updated, count = pattern.subn(block, text, count=1)
+              if count != 1:
+                  raise SystemExit(f'Não foi possível substituir {name} no template candidato.')
+              return updated
+
+          def build(phase):
+              text = source
+              text = replace_resource(text, 'DataTable', table_for(phase))
+              # Keep bucket byte-for-byte equivalent at CloudFormation resource-property level.
+              text = replace_resource(text, 'FilesBucket', copy.deepcopy(deployed['FilesBucket']))
+
+              protected_blocks = '\n\n'.join(
+                  yaml_json_resource(name, resource)
+                  for name, resource in sorted(protected.items())
+              )
+              if '\nOutputs:\n' not in text:
+                  raise SystemExit('Seção Outputs não encontrada.')
+              text = text.replace(
+                  '\nOutputs:\n',
+                  '\n' + protected_blocks + '\n\nOutputs:\n',
+                  1,
+              )
+              return text
+
+          Path('painel-obrigacoes/aws/template-staging-phase1.yaml').write_text(build(1))
+          Path('painel-obrigacoes/aws/template-staging-final.yaml').write_text(build(2))
+
+          print('Templates de staging preparados.')
+          print('Recursos Deletion* preservados:', ', '.join(sorted(protected)))
+          print('StreamSpecification preservado:', 'StreamSpecification' in deployed['DataTable'].get('Properties', {}))
           PY
+        working-directory: .
+
+      - name: Validate staged templates
+        run: |
+          set -euo pipefail
+          sam validate --lint --template-file template-staging-phase1.yaml
+          sam validate --lint --template-file template-staging-final.yaml
+        working-directory: painel-obrigacoes/aws
+
+      - name: Deploy staging phase 1 - record lookup index
+        env:
+          AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          AWS_SESSION_TOKEN: ${{ secrets.AWS_SESSION_TOKEN }}
+        run: |
+          set -euo pipefail
+          sam deploy \
+            --template-file template-staging-phase1.yaml \
+            --stack-name "$STACK_NAME" \
+            --region "$AWS_REGION" \
+            --s3-bucket "$SAM_ARTIFACT_BUCKET" \
+            --s3-prefix "_sam/staging/phase1" \
+            --capabilities CAPABILITY_NAMED_IAM \
+            --no-confirm-changeset \
+            --no-fail-on-empty-changeset \
+            --parameter-overrides \
+              Environment=staging \
+              ToolId=painel-obrigacoes \
+              ApiMode=HttpApi
+        working-directory: painel-obrigacoes/aws
+
+      - name: Verify phase 1 index
+        env:
+          AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          AWS_SESSION_TOKEN: ${{ secrets.AWS_SESSION_TOKEN }}
+        run: |
+          set -euo pipefail
+          TABLE_NAME="$(aws cloudformation describe-stacks \
+            --region "$AWS_REGION" \
+            --stack-name "$STACK_NAME" \
+            --query "Stacks[0].Outputs[?OutputKey=='TableName'].OutputValue | [0]" \
+            --output text)"
+          STATUS="$(aws dynamodb describe-table \
+            --region "$AWS_REGION" \
+            --table-name "$TABLE_NAME" \
+            --query "Table.GlobalSecondaryIndexes[?IndexName=='GSI-RECORD-LOOKUP'].IndexStatus | [0]" \
+            --output text)"
+          test "$STATUS" = "ACTIVE" || {
+            echo "GSI-RECORD-LOOKUP não está ACTIVE: $STATUS"
+            exit 1
+          }
+          echo "GSI-RECORD-LOOKUP ACTIVE."
         working-directory: .
 
       - name: Deploy existing staging stack
@@ -189,7 +327,7 @@ jobs:
           AWS_SESSION_TOKEN: ${{ secrets.AWS_SESSION_TOKEN }}
         run: |
           set -euo pipefail
-          sam deploy             --template-file template.yaml             --stack-name "$STACK_NAME"             --region "$AWS_REGION"             --s3-bucket "$SAM_ARTIFACT_BUCKET"             --s3-prefix "_sam/staging"             --capabilities CAPABILITY_NAMED_IAM             --no-confirm-changeset             --no-fail-on-empty-changeset             --parameter-overrides               Environment=staging               ToolId=painel-obrigacoes               ApiMode=HttpApi
+          sam deploy             --template-file template-staging-final.yaml             --stack-name "$STACK_NAME"             --region "$AWS_REGION"             --s3-bucket "$SAM_ARTIFACT_BUCKET"             --s3-prefix "_sam/staging/final"             --capabilities CAPABILITY_NAMED_IAM             --no-confirm-changeset             --no-fail-on-empty-changeset             --parameter-overrides               Environment=staging               ToolId=painel-obrigacoes               ApiMode=HttpApi
         working-directory: painel-obrigacoes/aws
 
       - name: Verify stack update
