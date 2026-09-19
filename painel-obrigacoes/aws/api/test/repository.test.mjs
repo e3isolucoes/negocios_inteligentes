@@ -28,7 +28,7 @@ test('listagem rejeita cursor adulterado', async () => {
   );
 });
 
-test('atualização de perfil sincroniza role e grants no MEMBER existente', async () => {
+test('atualização de perfil sincroniza papel sem misturar module_access com grants de segurança', async () => {
   const admin = {
     workspaceId: 'empresa-a',
     userId: 'admin-a',
@@ -62,7 +62,7 @@ test('atualização de perfil sincroniza role e grants no MEMBER existente', asy
   await repository.update(admin, 'profiles', 'user-b', {
     role: 'gestor',
     active: true,
-    module_access: ['obrigacoes'],
+    module_access: ['fiscal'],
     version: 1,
   });
 
@@ -72,8 +72,49 @@ test('atualização de perfil sincroniza role e grants no MEMBER existente', asy
     SK: 'MEMBER#user-b',
   });
   assert.equal(memberUpdate.ExpressionAttributeValues[':role'], 'manager');
-  assert.deepEqual(memberUpdate.ExpressionAttributeValues[':moduleGrants'], ['obrigacoes']);
+  assert.equal(memberUpdate.ExpressionAttributeValues[':moduleGrants'], undefined);
+  assert.doesNotMatch(memberUpdate.UpdateExpression, /module_grants/);
   assert.match(memberUpdate.ConditionExpression, /attribute_exists/);
+});
+
+test('delegado com grant administracao pode ajustar module_access, mas não papel ou active', async () => {
+  const delegated = {
+    workspaceId: 'empresa-a',
+    userId: 'gestor-a',
+    role: 'manager',
+    email: 'gestor@empresa.test',
+    moduleGrants: ['obrigacoes', 'administracao'],
+  };
+  const current = {
+    PK: 'TOOL#painel-obrigacoes#ENV#dev#WORKSPACE#empresa-a',
+    SK: 'PROFILE#user-b',
+    id: 'user-b',
+    workspace_id: 'empresa-a',
+    entityType: 'profiles',
+    role: 'membro',
+    active: true,
+    module_access: [],
+    version: 1,
+  };
+  const client = {
+    send: async (command) => {
+      if (command.constructor.name === 'GetCommand') return { Item: current };
+      return {};
+    },
+  };
+  const repository = new Repository(client, 'table');
+
+  await assert.doesNotReject(
+    repository.update(delegated, 'profiles', 'user-b', { module_access: ['fiscal'], version: 1 }),
+  );
+  await assert.rejects(
+    repository.update(delegated, 'profiles', 'user-b', { role: 'gestor', version: 1 }),
+    /Admin da Ferramenta|papéis/i,
+  );
+  await assert.rejects(
+    repository.update(delegated, 'profiles', 'user-b', { active: false, version: 1 }),
+    /Admin da Ferramenta|controle de acesso/i,
+  );
 });
 
 
