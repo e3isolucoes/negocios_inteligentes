@@ -3,19 +3,19 @@ export const APP_ENV = process.env.APP_ENV || 'dev';
 export const SCHEMA_VERSION = 1;
 
 const ENTITY_CONFIG = Object.freeze({
-  profiles: { prefix: 'PROFILE', grant: 'administracao', read: ['member', 'manager', 'admin', 'super_admin'], write: ['admin', 'super_admin'] },
+  profiles: { prefix: 'PROFILE', grant: 'administracao', readGrant: 'obrigacoes', writeGrant: 'administracao', read: ['member', 'manager', 'admin', 'super_admin'], write: ['admin', 'super_admin'] },
   companies: { prefix: 'COMPANY', grant: 'obrigacoes', read: ['member', 'manager', 'admin', 'super_admin'], write: ['manager', 'admin', 'super_admin'] },
   obligations: { prefix: 'OBLIGATION', grant: 'obrigacoes', read: ['member', 'manager', 'admin', 'super_admin'], write: ['member', 'manager', 'admin', 'super_admin'] },
   completions: { prefix: 'COMPLETION', grant: 'obrigacoes', read: ['member', 'manager', 'admin', 'super_admin'], write: ['member', 'manager', 'admin', 'super_admin'] },
   obligation_comments: { prefix: 'COMMENT', grant: 'obrigacoes', read: ['member', 'manager', 'admin', 'super_admin'], write: ['member', 'manager', 'admin', 'super_admin'] },
   audit_log: { prefix: 'AUDIT', grant: 'administracao', read: ['admin', 'super_admin'], write: [] },
-  holidays: { prefix: 'HOLIDAY', grant: 'administracao', read: ['member', 'manager', 'admin', 'super_admin'], write: ['manager', 'admin', 'super_admin'] },
+  holidays: { prefix: 'HOLIDAY', grant: 'administracao', readGrant: 'obrigacoes', writeGrant: 'administracao', read: ['member', 'manager', 'admin', 'super_admin'], write: ['manager', 'admin', 'super_admin'] },
   checklist_items: { prefix: 'CHECKLIST', grant: 'obrigacoes', read: ['member', 'manager', 'admin', 'super_admin'], write: ['member', 'manager', 'admin', 'super_admin'] },
-  obligation_rules: { prefix: 'RULE', grant: 'administracao', read: ['member', 'manager', 'admin', 'super_admin'], write: ['manager', 'admin', 'super_admin'] },
+  obligation_rules: { prefix: 'RULE', grant: 'administracao', readGrant: 'obrigacoes', writeGrant: 'administracao', read: ['member', 'manager', 'admin', 'super_admin'], write: ['manager', 'admin', 'super_admin'] },
   obligation_date_overrides: { prefix: 'DATE_OVERRIDE', grant: 'obrigacoes', read: ['member', 'manager', 'admin', 'super_admin'], write: ['manager', 'admin', 'super_admin'] },
-  tax_regimes: { prefix: 'TAX_REGIME', grant: 'administracao', read: ['member', 'manager', 'admin', 'super_admin'], write: ['admin', 'super_admin'] },
-  tax_regime_rules: { prefix: 'TAX_REGIME_RULE', grant: 'administracao', read: ['member', 'manager', 'admin', 'super_admin'], write: ['admin', 'super_admin'] },
-  categories: { prefix: 'CATEGORY', grant: 'administracao', read: ['member', 'manager', 'admin', 'super_admin'], write: ['manager', 'admin', 'super_admin'] },
+  tax_regimes: { prefix: 'TAX_REGIME', grant: 'administracao', readGrant: 'obrigacoes', writeGrant: 'administracao', read: ['member', 'manager', 'admin', 'super_admin'], write: ['admin', 'super_admin'] },
+  tax_regime_rules: { prefix: 'TAX_REGIME_RULE', grant: 'administracao', readGrant: 'obrigacoes', writeGrant: 'administracao', read: ['member', 'manager', 'admin', 'super_admin'], write: ['admin', 'super_admin'] },
+  categories: { prefix: 'CATEGORY', grant: 'administracao', readGrant: 'obrigacoes', writeGrant: 'administracao', read: ['member', 'manager', 'admin', 'super_admin'], write: ['manager', 'admin', 'super_admin'] },
   workspaces: { prefix: 'WORKSPACE_META', grant: 'administracao', read: ['member', 'manager', 'admin', 'super_admin'], write: ['super_admin'] }
 });
 
