@@ -135,6 +135,8 @@ test('provisiona vínculo genérico sem exigir documento cadastral', async () =>
   assert.equal(command.input.TransactItems[0].Update.ExpressionAttributeValues[':gsi1pk'], 'MEMBER#user-1');
   assert.equal(command.input.TransactItems[0].Update.ExpressionAttributeValues[':gsi1sk'], 'WORKSPACE#workspace-1');
   assert.equal(command.input.TransactItems[0].Update.ExpressionAttributeValues[':memberEntity'], 'member');
+  assert.deepEqual(command.input.TransactItems[0].Update.ExpressionAttributeValues[':defaultModuleGrants'], ['obrigacoes']);
   assert.match(command.input.TransactItems[0].Update.UpdateExpression, /if_not_exists\(#role,:member\)/);
+  assert.match(command.input.TransactItems[0].Update.UpdateExpression, /module_grants=if_not_exists\(module_grants,:defaultModuleGrants\)/);
   assert.equal(command.input.TransactItems[3].Put.Item.action, 'PORTAL_ACCESS_PROVISIONED');
 });
