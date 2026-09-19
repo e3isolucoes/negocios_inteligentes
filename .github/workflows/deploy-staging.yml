@@ -821,6 +821,10 @@ jobs:
               'sandbox',
               'iframe',
               'portal_sso_code',
+              '/api/client-tools',
+              'launchUrl',
+              'obrigacoes.e3isolucoes.com.br',
+              'Painel de Obrigações E3I',
           ]
           found=[]
           for path in Path('/tmp/portal-live').glob('*'):
@@ -832,10 +836,10 @@ jobs:
                   found.append((path.name, matches))
                   for needle in matches:
                       pos=text.find(needle)
-                      start=max(0,pos-500)
-                      end=min(len(text),pos+1200)
+                      start=max(0,pos-3000)
+                      end=min(len(text),pos+3000)
                       print(f'--- {path.name} :: {needle} ---')
-                      print(text[start:end].replace('\n',' ')[:1800])
+                      print(text[start:end].replace('\n',' ')[:6000])
           print('PORTAL_LIVE_MATCHES=', found)
           PY
         working-directory: .
