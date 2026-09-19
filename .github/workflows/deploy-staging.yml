@@ -348,7 +348,7 @@ jobs:
                   raise SystemExit(f'Recurso original implantado obrigatório ausente: {required}')
 
           protected = {
-              key: value for key, value in deployed.items()
+              key: value for key, value in processed_resources.items()
               if key.startswith('Deletion')
           }
           if not protected:
@@ -404,11 +404,40 @@ jobs:
                   raise SystemExit(f'Não foi possível substituir {name} no template candidato.')
               return updated
 
-          def build(phase):
+          def build_final():
               text = source
-              text = replace_resource(text, 'DataTable', table_for(phase))
-              # Keep bucket byte-for-byte equivalent at CloudFormation resource-property level.
-              text = replace_resource(text, 'FilesBucket', copy.deepcopy(deployed['FilesBucket']))
+
+              # DynamoDB GSIs are migrated out-of-band in staging. Keep the stack's
+              # deployed DataTable definition untouched to avoid dependency churn.
+              text = replace_resource(
+                  text,
+                  'DataTable',
+                  copy.deepcopy(processed_resources['DataTable']),
+              )
+              text = replace_resource(
+                  text,
+                  'FilesBucket',
+                  copy.deepcopy(processed_resources['FilesBucket']),
+              )
+
+              # Notification infrastructure is outside the scope of this migration.
+              # Preserve the currently deployed processed definitions so the change
+              # set cannot rewrite them because Globals changed in the new template.
+              notification_names = [
+                  'NotificationEmailIdentity',
+                  'NotificationFunction',
+                  'NotificationExecutionRole',
+                  'NotificationLogGroup',
+                  'NotificationSchedulerRole',
+                  'NotificationSchedule',
+              ]
+              for name in notification_names:
+                  if name in processed_resources:
+                      text = replace_resource(
+                          text,
+                          name,
+                          copy.deepcopy(processed_resources[name]),
+                      )
 
               protected_blocks = '\n\n'.join(
                   yaml_json_resource(name, resource)
@@ -423,22 +452,12 @@ jobs:
               )
               return text
 
-          phase1 = freeze_datatable_references(copy.deepcopy(processed))
-          phase1.setdefault('Resources', {})['DataTable'] = table_for(
-              1,
-              processed_resources['DataTable'],
+          Path('painel-obrigacoes/aws/template-staging-final.yaml').write_text(
+              build_final()
           )
 
-          phase1['Resources']['DeletionDeadLetterAlarm']['Properties']['AlarmDescription'] = live_alarm_description
-          phase1['Resources']['NotificationSchedule']['Properties']['Description'] = live_schedule_description
-
-          Path('painel-obrigacoes/aws/template-staging-phase1.json').write_text(
-              json.dumps(phase1, indent=2)
-          )
-          Path('painel-obrigacoes/aws/template-staging-final.yaml').write_text(build(2))
-
-          print('Templates de staging preparados.')
-          print('Fase 1 baseada integralmente no template Processed; somente DataTable é alterado.')
+          print('Template final de staging preparado.')
+          print('DataTable do CloudFormation preservado; GSIs serão migrados diretamente no DynamoDB.')
           print('Recursos Deletion* preservados:', ', '.join(sorted(protected)))
           print('Preservação baseada no template Original do stack.')
           print('StreamSpecification preservado:', 'StreamSpecification' in deployed['DataTable'].get('Properties', {}))
@@ -446,14 +465,13 @@ jobs:
           PY
         working-directory: .
 
-      - name: Validate staged templates
+      - name: Validate staged template
         run: |
           set -euo pipefail
-          python -m json.tool template-staging-phase1.json >/dev/null
           sam validate --lint --template-file template-staging-final.yaml
         working-directory: painel-obrigacoes/aws
 
-      - name: Deploy staging phase 1 - record lookup index
+      - name: Ensure staging DynamoDB indexes
         env:
           AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
           AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
@@ -461,125 +479,72 @@ jobs:
         run: |
           set -euo pipefail
 
-          CHANGE_SET="phase1-record-lookup-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
-
-          aws cloudformation describe-stacks \
+          TABLE_NAME="$(aws cloudformation describe-stacks \
             --region "$AWS_REGION" \
             --stack-name "$STACK_NAME" \
-            --output json >/tmp/phase1-stack.json
+            --query "Stacks[0].Outputs[?OutputKey=='TableName'].OutputValue | [0]" \
+            --output text)"
 
-          python - <<'PY' >/tmp/phase1-parameters.json
-          import json
-          data=json.load(open('/tmp/phase1-stack.json'))
-          params=data['Stacks'][0].get('Parameters', [])
-          print(json.dumps([
-              {'ParameterKey': p['ParameterKey'], 'UsePreviousValue': True}
-              for p in params
-          ]))
-          PY
+          ensure_index() {
+            local index_name="$1"
+            local hash_key="$2"
+            local range_key="$3"
 
-          TEMPLATE_SIZE="$(wc -c < template-staging-phase1.json)"
-          if [ "$TEMPLATE_SIZE" -le 50000 ]; then
-            TEMPLATE_MODE="body"
-          else
-            TEMPLATE_MODE="s3"
-            TEMPLATE_KEY="_sam/staging/phase1/template-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}.json"
-            aws s3 cp template-staging-phase1.json "s3://$SAM_ARTIFACT_BUCKET/$TEMPLATE_KEY"
-            TEMPLATE_URL="https://${SAM_ARTIFACT_BUCKET}.s3.${AWS_REGION}.amazonaws.com/${TEMPLATE_KEY}"
-          fi
-
-          if [ "$TEMPLATE_MODE" = "body" ]; then
-            aws cloudformation create-change-set \
+            local status
+            status="$(aws dynamodb describe-table \
               --region "$AWS_REGION" \
-              --stack-name "$STACK_NAME" \
-              --change-set-name "$CHANGE_SET" \
-              --change-set-type UPDATE \
-              --template-body file://template-staging-phase1.json \
-              --parameters file:///tmp/phase1-parameters.json \
-              --capabilities CAPABILITY_NAMED_IAM CAPABILITY_AUTO_EXPAND
-          else
-            aws cloudformation create-change-set \
-              --region "$AWS_REGION" \
-              --stack-name "$STACK_NAME" \
-              --change-set-name "$CHANGE_SET" \
-              --change-set-type UPDATE \
-              --template-url "$TEMPLATE_URL" \
-              --parameters file:///tmp/phase1-parameters.json \
-              --capabilities CAPABILITY_NAMED_IAM CAPABILITY_AUTO_EXPAND
-          fi
+              --table-name "$TABLE_NAME" \
+              --query "Table.GlobalSecondaryIndexes[?IndexName=='$index_name'].IndexStatus | [0]" \
+              --output text)"
 
-          aws cloudformation wait change-set-create-complete \
-            --region "$AWS_REGION" \
-            --stack-name "$STACK_NAME" \
-            --change-set-name "$CHANGE_SET"
+            if [ "$status" = "ACTIVE" ]; then
+              echo "$index_name já está ACTIVE."
+              return 0
+            fi
 
-          aws cloudformation describe-change-set \
-            --region "$AWS_REGION" \
-            --stack-name "$STACK_NAME" \
-            --change-set-name "$CHANGE_SET" \
-            --output json >/tmp/phase1-changeset.json
+            if [ "$status" = "CREATING" ] || [ "$status" = "UPDATING" ]; then
+              echo "$index_name já existe e está $status; aguardando."
+            elif [ "$status" = "None" ] || [ -z "$status" ]; then
+              echo "Criando $index_name diretamente no DynamoDB."
+              aws dynamodb update-table \
+                --region "$AWS_REGION" \
+                --table-name "$TABLE_NAME" \
+                --attribute-definitions \
+                  "AttributeName=$hash_key,AttributeType=S" \
+                  "AttributeName=$range_key,AttributeType=S" \
+                --global-secondary-index-updates \
+                  "[{\"Create\":{\"IndexName\":\"$index_name\",\"KeySchema\":[{\"AttributeName\":\"$hash_key\",\"KeyType\":\"HASH\"},{\"AttributeName\":\"$range_key\",\"KeyType\":\"RANGE\"}],\"Projection\":{\"ProjectionType\":\"ALL\"},\"ProvisionedThroughput\":{\"ReadCapacityUnits\":1,\"WriteCapacityUnits\":1}}}]" \
+                >/tmp/update-table.json
+            else
+              echo "Estado inesperado de $index_name: $status"
+              exit 1
+            fi
 
-          python - <<'PY'
-          import json
-          data=json.load(open('/tmp/phase1-changeset.json'))
-          changes=data.get('Changes', [])
-          if not changes:
-              raise SystemExit('Change Set da fase 1 está vazio; abortando para inspeção.')
-          unexpected=[]
-          for change in changes:
-              rc=change.get('ResourceChange', {})
-              logical=rc.get('LogicalResourceId')
-              action=rc.get('Action')
-              rtype=rc.get('ResourceType')
-              details=rc.get('Details', [])
-              compact=[
-                  {
-                      'target': d.get('Target', {}).get('Name'),
-                      'requiresRecreation': d.get('Target', {}).get('RequiresRecreation'),
-                      'evaluation': d.get('Evaluation'),
-                      'changeSource': d.get('ChangeSource'),
-                      'causingEntity': d.get('CausingEntity'),
-                  }
-                  for d in details
-              ]
-              print(f'Phase1 change: {action} {logical} {rtype} details={json.dumps(compact, sort_keys=True)}')
+            for attempt in $(seq 1 120); do
+              status="$(aws dynamodb describe-table \
+                --region "$AWS_REGION" \
+                --table-name "$TABLE_NAME" \
+                --query "Table.GlobalSecondaryIndexes[?IndexName=='$index_name'].IndexStatus | [0]" \
+                --output text)"
+              if [ "$status" = "ACTIVE" ]; then
+                echo "$index_name ACTIVE."
+                return 0
+              fi
+              echo "Aguardando $index_name: $status"
+              sleep 10
+            done
 
-              if logical == 'DataTable' and action == 'Modify':
-                  continue
+            echo "Timeout aguardando $index_name ficar ACTIVE."
+            exit 1
+          }
 
-              indirect = (
-                  action == 'Modify'
-                  and details
-                  and all(
-                      d.get('Evaluation') == 'Dynamic'
-                      and d.get('ChangeSource') in ('ResourceReference', 'ResourceAttribute')
-                      and d.get('Target', {}).get('RequiresRecreation') == 'Never'
-                      for d in details
-                  )
-              )
-              if not indirect:
-                  unexpected.append((action, logical, rtype, compact))
+          ensure_index "GSI-RECORD-LOOKUP" "GSIRecordPK" "GSIRecordSK"
+          ensure_index "GSI-DUEDATE" "GSIDueDatePK" "GSIDueDateSK"
 
-          if unexpected:
-              print('ALTERAÇÕES DIRETAS/INESPERADAS NA FASE 1:', json.dumps(unexpected, indent=2))
-              raise SystemExit(2)
+          echo "GSIs de staging concluídos. Observação: índices estão intencionalmente em drift controlado do template CloudFormation."
+        working-directory: .
 
-          print('Guardrail aprovado: DataTable é a única mudança direta; nenhuma dependência exige recriação.')
-          PY
-
-          aws cloudformation execute-change-set \
-            --region "$AWS_REGION" \
-            --stack-name "$STACK_NAME" \
-            --change-set-name "$CHANGE_SET"
-
-          aws cloudformation wait stack-update-complete \
-            --region "$AWS_REGION" \
-            --stack-name "$STACK_NAME"
-
-          echo "Fase 1 do DynamoDB concluída via Change Set isolado."
-        working-directory: painel-obrigacoes/aws
-
-      - name: Verify phase 1 index
+      - name: Verify staging DynamoDB indexes
         env:
           AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
           AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
@@ -591,26 +556,117 @@ jobs:
             --stack-name "$STACK_NAME" \
             --query "Stacks[0].Outputs[?OutputKey=='TableName'].OutputValue | [0]" \
             --output text)"
-          STATUS="$(aws dynamodb describe-table \
-            --region "$AWS_REGION" \
-            --table-name "$TABLE_NAME" \
-            --query "Table.GlobalSecondaryIndexes[?IndexName=='GSI-RECORD-LOOKUP'].IndexStatus | [0]" \
-            --output text)"
-          test "$STATUS" = "ACTIVE" || {
-            echo "GSI-RECORD-LOOKUP não está ACTIVE: $STATUS"
-            exit 1
-          }
-          echo "GSI-RECORD-LOOKUP ACTIVE."
+
+          for index_name in GSI-RECORD-LOOKUP GSI-DUEDATE; do
+            STATUS="$(aws dynamodb describe-table \
+              --region "$AWS_REGION" \
+              --table-name "$TABLE_NAME" \
+              --query "Table.GlobalSecondaryIndexes[?IndexName=='$index_name'].IndexStatus | [0]" \
+              --output text)"
+            test "$STATUS" = "ACTIVE" || {
+              echo "$index_name não está ACTIVE: $STATUS"
+              exit 1
+            }
+            echo "$index_name ACTIVE."
+          done
         working-directory: .
 
-      - name: Deploy existing staging stack
+      - name: Create guarded final staging change set
         env:
           AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
           AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
           AWS_SESSION_TOKEN: ${{ secrets.AWS_SESSION_TOKEN }}
         run: |
           set -euo pipefail
-          sam deploy             --template-file template-staging-final.yaml             --stack-name "$STACK_NAME"             --region "$AWS_REGION"             --s3-bucket "$SAM_ARTIFACT_BUCKET"             --s3-prefix "_sam/staging/final"             --capabilities CAPABILITY_NAMED_IAM             --no-confirm-changeset             --no-fail-on-empty-changeset             --parameter-overrides               Environment=staging               ToolId=painel-obrigacoes               ApiMode=HttpApi
+
+          sam package \
+            --template-file template-staging-final.yaml \
+            --s3-bucket "$SAM_ARTIFACT_BUCKET" \
+            --s3-prefix "_sam/staging/final" \
+            --region "$AWS_REGION" \
+            --output-template-file packaged-staging-final.yaml
+
+          aws cloudformation describe-stacks \
+            --region "$AWS_REGION" \
+            --stack-name "$STACK_NAME" \
+            --output json >/tmp/final-stack.json
+
+          python - <<'PY' >/tmp/final-parameters.json
+          import json
+          data=json.load(open('/tmp/final-stack.json'))
+          params=data['Stacks'][0].get('Parameters', [])
+          print(json.dumps([
+              {'ParameterKey': p['ParameterKey'], 'UsePreviousValue': True}
+              for p in params
+          ]))
+          PY
+
+          aws s3 cp packaged-staging-final.yaml \
+            "s3://$SAM_ARTIFACT_BUCKET/_sam/staging/final/packaged-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}.yaml"
+
+          TEMPLATE_URL="https://${SAM_ARTIFACT_BUCKET}.s3.${AWS_REGION}.amazonaws.com/_sam/staging/final/packaged-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}.yaml"
+          CHANGE_SET="final-staging-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+
+          aws cloudformation create-change-set \
+            --region "$AWS_REGION" \
+            --stack-name "$STACK_NAME" \
+            --change-set-name "$CHANGE_SET" \
+            --change-set-type UPDATE \
+            --template-url "$TEMPLATE_URL" \
+            --parameters file:///tmp/final-parameters.json \
+            --capabilities CAPABILITY_NAMED_IAM CAPABILITY_AUTO_EXPAND
+
+          aws cloudformation wait change-set-create-complete \
+            --region "$AWS_REGION" \
+            --stack-name "$STACK_NAME" \
+            --change-set-name "$CHANGE_SET"
+
+          aws cloudformation describe-change-set \
+            --region "$AWS_REGION" \
+            --stack-name "$STACK_NAME" \
+            --change-set-name "$CHANGE_SET" \
+            --output json >/tmp/final-changeset.json
+
+          python - <<'PY'
+          import json
+          data=json.load(open('/tmp/final-changeset.json'))
+          changes=data.get('Changes', [])
+          if not changes:
+              raise SystemExit('Change Set final vazio; abortando para inspeção.')
+
+          critical={'DataTable','FilesBucket','UserPool','ServerlessHttpApi'}
+          bad=[]
+          for change in changes:
+              rc=change.get('ResourceChange', {})
+              logical=rc.get('LogicalResourceId')
+              action=rc.get('Action')
+              replacement=rc.get('Replacement')
+              rtype=rc.get('ResourceType')
+              print(f'Final change: {action} {logical} {rtype} replacement={replacement}')
+
+              if action == 'Remove':
+                  bad.append(('remove', logical, rtype))
+              if logical in ('DataTable','FilesBucket') and action != 'Dynamic':
+                  if action in ('Modify','Remove','Add'):
+                      bad.append(('protected-storage-change', logical, action, replacement))
+              if logical in critical and replacement in ('True','Conditional'):
+                  bad.append(('critical-replacement', logical, replacement))
+
+          if bad:
+              print('CHANGE SET FINAL BLOQUEADO:', json.dumps(bad, indent=2))
+              raise SystemExit(2)
+
+          print('Guardrail final aprovado: sem remoções e sem alteração/replacement de DataTable/FilesBucket.')
+          PY
+
+          aws cloudformation execute-change-set \
+            --region "$AWS_REGION" \
+            --stack-name "$STACK_NAME" \
+            --change-set-name "$CHANGE_SET"
+
+          aws cloudformation wait stack-update-complete \
+            --region "$AWS_REGION" \
+            --stack-name "$STACK_NAME"
         working-directory: painel-obrigacoes/aws
 
       - name: Verify stack update
