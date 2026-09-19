@@ -1,0 +1,85 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<meta name="description" content="Gestão à vista de prazos, responsáveis e evidências fiscais." />
+<title>E3I Soluções — Gestão de Atividades</title>
+<!--
+  ============================================================================
+  CONFIGURAÇÃO OBRIGATÓRIA — leia antes de publicar
+  ============================================================================
+  A prévia AWS usa DynamoDB e Amazon Cognito. O Supabase permanece apenas
+  como opção legada de reversão durante a transição controlada.
+
+  Este repositório já está conectado ao projeto Supabase em uso. Publicar uma
+  nova versão do site não cria, substitui ou apaga esse projeto e seus dados.
+
+  Para uma instalação realmente nova, veja o passo a passo no SETUP.md.
+
+  Nunca substitua js/config.js pela configuração de outro projeto no deploy.
+  ============================================================================
+-->
+<link rel="stylesheet" href="css/styles.css" />
+<link rel="stylesheet" href="css/validacao.css" />
+<link rel="manifest" href="manifest.json" />
+<link rel="icon" href="icons/e3l-solucoes.svg" type="image/svg+xml" />
+<link rel="apple-touch-icon" href="icons/e3l-solucoes.svg" />
+<meta name="theme-color" content="#071F4A" />
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.45.0"></script>
+<script src="https://cdn.jsdelivr.net/npm/papaparse@5.4.1/papaparse.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/tesseract.js@5.1.1/dist/tesseract.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/pdfjs-dist@3.11.174/build/pdf.min.js"></script>
+</head>
+<body>
+<a class="skip-link" href="#app">Ir para o conteúdo principal</a>
+<div class="login-shell" id="loginScreen">
+  <div class="login-layout">
+    <section class="login-intro" aria-label="Apresentação da E3I Soluções">
+      <div class="vista-lockup"><img src="icons/e3l-solucoes.svg" alt="E3I Soluções" /></div>
+      <div class="login-intro-copy"><span class="login-kicker">GESTÃO DA EMPRESA</span><h1>Gestão à vista.<br />Decisões no prazo.</h1><p>Atividades administrativas, responsáveis, prazos e evidências reunidos em uma operação segura e compartilhada.</p></div>
+      <ul class="login-benefits"><li><span>01</span>Radar de prazos e prioridades</li><li><span>02</span>Histórico e evidências centralizados</li><li><span>03</span>Visão executiva da operação</li></ul>
+    </section>
+    <main class="login-card" aria-labelledby="loginTitle">
+      <div class="login-heading">
+        <span class="login-kicker">PORTAL DE ACESSO</span>
+        <span class="login-secure-badge"><span aria-hidden="true">✓</span> Conexão segura</span>
+      </div>
+      <h2 id="loginTitle">Acesse seu ambiente</h2>
+      <p>O acesso é centralizado no Portal E3I, com a mesma sessão e as permissões concedidas à sua empresa.</p>
+      <a class="portal-login-link" href="https://portal.e3isolucoes.com.br/">Acessar pelo Portal E3I <span aria-hidden="true">→</span></a>
+      <p id="portalLoginStatus" class="login-error hidden" role="alert" aria-live="polite"></p>
+      <div class="login-divider hidden" aria-hidden="true"><span>Acesso legado desativado</span></div>
+      <form id="loginForm" class="hidden" novalidate aria-hidden="true">
+        <div class="field"><label for="loginEmail">E-mail corporativo</label><input id="loginEmail" name="email" type="email" autocomplete="username" inputmode="email" autocapitalize="none" spellcheck="false" placeholder="voce@empresa.com.br" required aria-describedby="loginError" /></div>
+        <div class="field"><div class="field-label-row"><label for="loginPassword">Senha</label><button class="password-toggle" id="passwordToggle" type="button" aria-controls="loginPassword" aria-pressed="false">Mostrar senha</button></div><div class="password-field"><input id="loginPassword" name="password" type="password" autocomplete="current-password" placeholder="Digite sua senha" required aria-describedby="capsLockHint loginError" /></div><small id="capsLockHint" class="caps-lock-hint hidden" role="status">Caps Lock está ativado</small></div>
+        <p id="loginError" class="login-error hidden" role="alert" aria-live="polite"></p>
+        <button class="btn-primary" id="loginBtn" type="submit"><span>Entrar no painel</span><span aria-hidden="true">→</span></button>
+        <button class="forgot-password" id="forgotPasswordBtn" type="button">Esqueci minha senha</button>
+      </form>
+      <aside class="tenant-assurance" aria-label="Proteção dos dados empresariais">
+        <span class="tenant-assurance-icon" aria-hidden="true">⌂</span>
+        <div><strong>Seu ambiente, seus dados</strong><small>Registros, documentos e histórico ficam isolados por empresa. Seu perfil define o que você pode visualizar e alterar.</small></div>
+      </aside>
+      <small class="login-security"><i></i> Acesso monitorado · Sessão individual · Permissões por perfil</small>
+    </main>
+  </div>
+</div>
+<div class="login-shell hidden" id="resetPasswordScreen">
+  <div class="login-card">
+    <img class="reset-brand-logo" src="icons/e3l-solucoes.svg" alt="E3I Soluções" />
+    <h1>Definir nova senha</h1>
+    <p>Escolha uma nova senha para a sua conta.</p>
+    <div class="field"><label for="resetCodeInput">Código recebido por e-mail</label><input id="resetCodeInput" inputmode="numeric" autocomplete="one-time-code" /></div>
+    <div class="field"><label for="newPasswordInput">Nova senha</label><input id="newPasswordInput" type="password" autocomplete="new-password" placeholder="Mín. 8 caracteres, com maiúscula e número" /></div>
+    <p id="resetPasswordError" class="login-error hidden"></p>
+    <button class="btn-primary" id="resetPasswordBtn">Salvar nova senha</button>
+  </div>
+</div>
+<div class="shell hidden" id="app"></div>
+
+<script src="js/runtime-config.js?v=20260903-sso-modular-v1"></script>
+<script type="module" src="js/app.js?v=20260903-sso-modular-v1"></script>
+</body>
+</html>
