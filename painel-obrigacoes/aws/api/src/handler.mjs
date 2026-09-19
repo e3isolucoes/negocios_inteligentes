@@ -180,6 +180,21 @@ export async function handler(event) {
     const auth = await authenticate(event, ddb, process.env.TABLE_NAME);
     if (method === 'GET' && path === 'me') return response(200, { userId: auth.userId, email: auth.email, workspaceId: auth.workspaceId, role: auth.role, moduleGrants: auth.moduleGrants }, event);
 
+    if (method === 'GET' && path === 'admin/workspaces') {
+      return response(200, await adminService.listWorkspaces(auth, listOptions(event)), event);
+    }
+    if (method === 'POST' && path === 'admin/workspaces') {
+      return response(201, await adminService.createWorkspace(auth, parseBody(event)), event);
+    }
+    const adminWorkspaceMatch = path.match(/^admin\/workspaces\/([^/]+)$/);
+    if (method === 'PATCH' && adminWorkspaceMatch) {
+      return response(200, await adminService.updateWorkspace(
+        auth,
+        decodeURIComponent(adminWorkspaceMatch[1]),
+        parseBody(event),
+      ), event);
+    }
+
     if (method === 'POST' && path === 'admin/users') {
       return response(201, await adminService.inviteUser(auth, parseBody(event)), event);
     }
