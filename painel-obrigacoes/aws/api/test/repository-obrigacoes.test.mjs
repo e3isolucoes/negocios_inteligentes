@@ -301,3 +301,68 @@ test('usuário comum com entitlement ativo opera dentro do papel permitido', asy
   assert.equal(created.name, 'Permitida');
   assert.equal(findBySk(client, 'RECORD#obrigacoes#activity#').length, 1);
 });
+
+
+test('conclusão congela competência e estrutura e alterações futuras preservam o histórico', async () => {
+  const client = new MemoryDocumentClient();
+  const repository = new ObrigacoesRepository(client, 'table');
+  await seedActiveEntitlement(repository);
+
+  const activity = await repository.create(auth, 'obligations', {
+    name: 'DCTFWeb',
+    frequency: 'mensal',
+    competence_offset_months: 1,
+    module_key: 'fiscal',
+  });
+
+  const completion = await repository.create(auth, 'completions', {
+    obligation_id: activity.id,
+    occurrence_date: '2026-09-20',
+    done_by: 'user-a',
+    done_by_name: 'Usuário A',
+  });
+
+  assert.equal(completion.competence_date, '2026-08-01');
+  assert.equal(completion.obligation_snapshot.name, 'DCTFWeb');
+  assert.equal(completion.obligation_snapshot.competence_offset_months, 1);
+
+  const updated = await repository.update(auth, 'obligations', activity.id, {
+    competence_offset_months: 0,
+    version: activity.version,
+  });
+
+  assert.equal(updated.competence_offset_months, 0);
+  assert.equal(updated.structure_history.length, 1);
+  assert.equal(updated.structure_history[0].snapshot.competence_offset_months, 1);
+  assert.equal(updated.structure_history[0].snapshot.name, 'DCTFWeb');
+
+  const preserved = await repository.get(auth, 'completions', completion.id);
+  assert.equal(preserved.competence_date, '2026-08-01');
+  assert.equal(preserved.obligation_snapshot.competence_offset_months, 1);
+});
+
+test('update de conclusão não permite reescrever snapshot histórico', async () => {
+  const client = new MemoryDocumentClient();
+  const repository = new ObrigacoesRepository(client, 'table');
+  await seedActiveEntitlement(repository);
+
+  const activity = await repository.create(auth, 'obligations', {
+    name: 'EFD-Reinf',
+    frequency: 'mensal',
+    competence_offset_months: 1,
+  });
+  const completion = await repository.create(auth, 'completions', {
+    obligation_id: activity.id,
+    occurrence_date: '2026-09-15',
+  });
+
+  const updated = await repository.update(auth, 'completions', completion.id, {
+    competence_date: '2026-09-01',
+    obligation_snapshot: { name: 'adulterado', competence_offset_months: 0 },
+    version: completion.version,
+  });
+
+  assert.equal(updated.competence_date, '2026-08-01');
+  assert.equal(updated.obligation_snapshot.name, 'EFD-Reinf');
+  assert.equal(updated.obligation_snapshot.competence_offset_months, 1);
+});
