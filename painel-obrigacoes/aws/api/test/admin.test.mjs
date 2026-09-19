@@ -130,3 +130,50 @@ test('convite AWS cria MEMBER canônico com grant operacional obrigatório', asy
   assert.equal(memberItem.role, 'member');
   assert.deepEqual(memberItem.module_grants, ['obrigacoes']);
 });
+
+
+test('somente super_admin administra workspaces e criação grava metadata + entitlement canônicos', async () => {
+  const transactions = [];
+  const client = {
+    send: async (command) => {
+      if (command.constructor.name === 'TransactWriteCommand') {
+        transactions.push(command.input);
+        return {};
+      }
+      throw new Error('Comando inesperado no teste: ' + command.constructor.name);
+    },
+  };
+  const service = new AdminService(client, { send: async () => ({}) }, 'table', 'pool');
+
+  await assert.rejects(
+    service.createWorkspace({
+      workspaceId: 'empresa-a',
+      userId: 'admin-a',
+      role: 'admin',
+      moduleGrants: ['administracao'],
+    }, {
+      name: 'Empresa B',
+      document: '12345678000190',
+      access_status: 'full',
+    }),
+    (error) => error.statusCode === 403,
+  );
+
+  const created = await service.createWorkspace({
+    workspaceId: 'global',
+    userId: 'root',
+    role: 'super_admin',
+    moduleGrants: [],
+  }, {
+    id: 'empresa-b',
+    name: 'Empresa B',
+    document: '12345678000190',
+    access_status: 'full',
+  });
+
+  assert.equal(created.id, 'empresa-b');
+  const items = transactions[0].TransactItems.map((item) => item.Put.Item);
+  assert.ok(items.some((item) => item.PK === 'WORKSPACE#empresa-b' && item.SK === 'METADATA'));
+  assert.ok(items.some((item) => item.PK === 'WORKSPACE#empresa-b' && item.SK === 'ENTITLEMENT#obrigacoes' && item.status === 'ativo'));
+  assert.ok(items.some((item) => String(item.PK).includes('TOOL#painel-obrigacoes') && item.SK === 'WORKSPACE_META#empresa-b'));
+});
