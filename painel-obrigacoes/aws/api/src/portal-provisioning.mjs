@@ -1,7 +1,13 @@
 import { createHash, createHmac, randomUUID, timingSafeEqual } from 'node:crypto';
 import { PutCommand, TransactWriteCommand } from '@aws-sdk/lib-dynamodb';
 import { APP_ENV, SCHEMA_VERSION, tenantPk, TOOL_ID } from './model.mjs';
-import { memberIndexKeys, memberSk, workspacePk as genericWorkspacePk } from './model-generic.mjs';
+import {
+  entitlementSk,
+  GENERIC_SCHEMA_VERSION,
+  memberIndexKeys,
+  memberSk,
+  workspacePk as genericWorkspacePk,
+} from './model-generic.mjs';
 
 const MAX_CLOCK_SKEW_MS = 2 * 60 * 1000;
 const NONCE_TTL_SECONDS = Math.ceil(MAX_CLOCK_SKEW_MS / 1000) + 30;
@@ -159,6 +165,21 @@ export async function provisionPortalAccess(client, tableName, input) {
       UpdateExpression: 'SET id=:userId, workspace_id=:workspaceId, #email=:email, display_name=:displayName, active=:true, #role=if_not_exists(#role,:legacyMember), toolId=:tool, environment=:environment, entityType=:profile, schemaVersion=:schema, updated_at=:now, created_at=if_not_exists(created_at,:now)',
       ExpressionAttributeNames: { '#role': 'role', '#email': 'email' },
       ExpressionAttributeValues: { ...metadata, ':workspaceId': data.workspaceId, ':userId': data.userId, ':email': data.email, ':displayName': data.displayName, ':true': true, ':legacyMember': 'membro', ':profile': 'profiles' },
+    } },
+    { Update: {
+      TableName: tableName,
+      Key: { PK: genericPk, SK: entitlementSk('obrigacoes') },
+      UpdateExpression: 'SET moduleId=:moduleId, #plan=if_not_exists(#plan,:portalPlan), #status=if_not_exists(#status,:activeStatus), startedAt=if_not_exists(startedAt,:startedAt), updatedAt=:updatedAt, entityType=:entitlementEntity, schemaVersion=:genericSchema',
+      ExpressionAttributeNames: { '#plan': 'plan', '#status': 'status' },
+      ExpressionAttributeValues: {
+        ':moduleId': 'obrigacoes',
+        ':portalPlan': 'portal',
+        ':activeStatus': 'ativo',
+        ':startedAt': timestamp,
+        ':updatedAt': timestamp,
+        ':entitlementEntity': 'entitlement',
+        ':genericSchema': GENERIC_SCHEMA_VERSION,
+      },
     } },
     { Update: {
       TableName: tableName,
