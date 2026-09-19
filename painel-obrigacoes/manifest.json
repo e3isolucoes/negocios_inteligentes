@@ -1,0 +1,14 @@
+{
+  "name": "E3I Soluções — Gestão de Atividades",
+  "short_name": "Gestão E3I",
+  "description": "Gestão compartilhada de atividades administrativas, responsáveis, prazos e evidências.",
+  "start_url": ".",
+  "scope": ".",
+  "display": "standalone",
+  "background_color": "#F3F5F9",
+  "theme_color": "#071F4A",
+  "orientation": "portrait-primary",
+  "icons": [
+    { "src": "icons/e3l-solucoes.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any" }
+  ]
+}

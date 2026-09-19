@@ -1,0 +1,9 @@
+{
+  "name": "painel-obrigacoes-api",
+  "private": true,
+  "type": "module",
+  "main": "checklist-suggestions.js",
+  "dependencies": {
+    "@azure/functions": "^4.7.2"
+  }
+}
