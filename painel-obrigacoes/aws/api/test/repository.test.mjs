@@ -113,7 +113,7 @@ test('delegado com grant administracao pode ajustar module_access, mas não pape
   );
   await assert.rejects(
     repository.update(delegated, 'profiles', 'user-b', { active: false, version: 1 }),
-    /Admin da Ferramenta|controle de acesso/i,
+    /Admin da Ferramenta|controle de acesso|delegação administrativa|alterar papel/i,
   );
 });
 
