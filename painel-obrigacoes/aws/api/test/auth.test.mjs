@@ -27,10 +27,13 @@ test('aceita somente os emissores Cognito e Supabase explicitamente configurados
   ]);
 });
 
-test('nega módulo não concedido no backend e preserva associações legadas', () => {
-  assert.doesNotThrow(() => requireModuleGrant({ moduleGrants: null }, 'obrigacoes'));
-  assert.doesNotThrow(() => requireModuleGrant({ moduleGrants: ['obrigacoes'] }, 'obrigacoes'));
-  assert.throws(() => requireModuleGrant({ moduleGrants: ['obrigacoes'] }, 'administracao'), /não concedido/i);
+test('preserva operação básica legada e exige Administração explícita', () => {
+  assert.doesNotThrow(() => requireModuleGrant({ role: 'member', moduleGrants: null }, 'obrigacoes'));
+  assert.doesNotThrow(() => requireModuleGrant({ role: 'member', moduleGrants: ['obrigacoes'] }, 'obrigacoes'));
+  assert.throws(() => requireModuleGrant({ role: 'manager', moduleGrants: null }, 'administracao'), /não concedido/i);
+  assert.throws(() => requireModuleGrant({ role: 'manager', moduleGrants: ['obrigacoes'] }, 'administracao'), /não concedido/i);
+  assert.doesNotThrow(() => requireModuleGrant({ role: 'manager', moduleGrants: ['obrigacoes', 'administracao'] }, 'administracao'));
+  assert.doesNotThrow(() => requireModuleGrant({ role: 'admin', moduleGrants: [] }, 'administracao'));
 });
 
 test('relatedCompanies não concede acesso ao workspace citado sem MEMBER real', () => {
