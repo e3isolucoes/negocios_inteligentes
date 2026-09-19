@@ -138,7 +138,7 @@ test('provisiona vínculo genérico sem exigir documento cadastral', async () =>
   assert.deepEqual(command.input.TransactItems[0].Update.ExpressionAttributeValues[':defaultModuleGrants'], ['obrigacoes']);
   assert.match(command.input.TransactItems[0].Update.UpdateExpression, /if_not_exists\(#role,:member\)/);
   assert.match(command.input.TransactItems[0].Update.UpdateExpression, /module_grants=if_not_exists\(module_grants,:defaultModuleGrants\)/);
-  const entitlement = command.input.TransactItems[1].Update;
+  const entitlement = command.input.TransactItems[2].Update;
   assert.deepEqual(entitlement.Key, {
     PK: 'WORKSPACE#workspace-1',
     SK: 'ENTITLEMENT#obrigacoes',
