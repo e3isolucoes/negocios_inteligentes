@@ -7,11 +7,17 @@ import { createDownloadUrl, createUploadUrl, deleteStoredFile } from './files.mj
 import { provisionPortalAccess, verifyPortalProvisioning } from './portal-provisioning.mjs';
 import { consumePortalSession, createPortalSession } from './portal-session.mjs';
 import { Repository } from './repository.mjs';
+import { ObrigacoesRepository } from './repository-obrigacoes.mjs';
 
 const ddb = DynamoDBDocumentClient.from(new DynamoDBClient({}), { marshallOptions: { removeUndefinedValues: true } });
 const s3 = new S3Client({});
 const cognito = new CognitoIdentityProviderClient({});
 const repository = new Repository(ddb, process.env.TABLE_NAME);
+const obrigacoesRepository = new ObrigacoesRepository(ddb, process.env.TABLE_NAME);
+
+function repositoryFor(entity) {
+  return obrigacoesRepository.supports(entity) ? obrigacoesRepository : repository;
+}
 
 function allowedOrigin(event) {
   const allowlist = (process.env.ALLOWED_ORIGINS || process.env.ALLOWED_ORIGIN || '')
@@ -61,14 +67,15 @@ export async function handler(event) {
     if (path === 'files/download-url' && method === 'POST') return response(200, await createDownloadUrl(s3, process.env.FILES_BUCKET, auth, parseBody(event).path), event);
 
     const [entity, id] = path.split('/').map(decodeURIComponent);
-    if (method === 'GET' && !id) return response(200, await repository.list(auth, entity, listOptions(event)), event);
-    if (method === 'GET' && id) return response(200, await repository.get(auth, entity, id), event);
-    if (method === 'POST' && !id) return response(201, await repository.create(auth, entity, parseBody(event)), event);
-    if (method === 'PATCH' && id) return response(200, await repository.update(auth, entity, id, parseBody(event)), event);
+    const activeRepository = repositoryFor(entity);
+    if (method === 'GET' && !id) return response(200, await activeRepository.list(auth, entity, listOptions(event)), event);
+    if (method === 'GET' && id) return response(200, await activeRepository.get(auth, entity, id), event);
+    if (method === 'POST' && !id) return response(201, await activeRepository.create(auth, entity, parseBody(event)), event);
+    if (method === 'PATCH' && id) return response(200, await activeRepository.update(auth, entity, id, parseBody(event)), event);
     if (method === 'DELETE' && id) {
-      const current = entity === 'completions' ? await repository.get(auth, entity, id) : null;
+      const current = entity === 'completions' ? await activeRepository.get(auth, entity, id) : null;
       if (current?.attachment_path) await deleteStoredFile(s3, process.env.FILES_BUCKET, auth, current.attachment_path);
-      await repository.remove(auth, entity, id);
+      await activeRepository.remove(auth, entity, id);
       return response(204, {}, event);
     }
     return response(404, { error: 'Rota não encontrada.', requestId }, event);

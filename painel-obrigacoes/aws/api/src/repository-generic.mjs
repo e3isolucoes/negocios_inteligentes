@@ -1,5 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import {
+  DeleteCommand,
   GetCommand,
   PutCommand,
   QueryCommand,
@@ -153,6 +154,87 @@ export class GenericRepository {
       || result.Item?.SK !== recordSk(moduleId, recordType, recordId)
     ) return null;
     return withoutInfrastructure(result.Item);
+  }
+
+  async updateRecord(workspaceId, moduleId, recordType, recordId, patch = {}) {
+    const workspace = assertWorkspaceId(workspaceId);
+    const key = {
+      PK: workspacePk(workspace),
+      SK: recordSk(moduleId, recordType, recordId),
+    };
+    const result = await this.client.send(new GetCommand({
+      TableName: this.tableName,
+      Key: key,
+      ConsistentRead: true,
+    }));
+    const current = result.Item;
+    if (
+      current?.workspace_id !== workspace
+      || current?.PK !== key.PK
+      || current?.SK !== key.SK
+    ) {
+      throw Object.assign(new Error('Registro não encontrado.'), { statusCode: 404 });
+    }
+
+    const safePatch = safeData(patch.data);
+    const expectedVersion = Number(patch.expectedVersion ?? current.version ?? 1);
+    if (expectedVersion !== Number(current.version ?? 1)) {
+      throw Object.assign(new Error('O registro foi alterado por outro usuário.'), { statusCode: 409 });
+    }
+
+    const dueDate = patch.dueDate === undefined
+      ? current.due_date
+      : normalizeDateOnly(patch.dueDate);
+
+    const next = {
+      ...current,
+      ...safePatch,
+      version: expectedVersion + 1,
+      updated_at: now(),
+    };
+
+    delete next.GSIDueDatePK;
+    delete next.GSIDueDateSK;
+    if (dueDate) {
+      next.due_date = dueDate;
+      Object.assign(next, dueDateIndexKeys(workspace, dueDate, recordId));
+    } else if (patch.dueDate !== undefined) {
+      next.due_date = null;
+    }
+
+    try {
+      await this.client.send(new PutCommand({
+        TableName: this.tableName,
+        Item: next,
+        ConditionExpression: 'attribute_exists(PK) AND attribute_exists(SK) AND (attribute_not_exists(#version) OR #version = :expectedVersion)',
+        ExpressionAttributeNames: { '#version': 'version' },
+        ExpressionAttributeValues: { ':expectedVersion': expectedVersion },
+      }));
+    } catch (error) {
+      if (error?.name === 'ConditionalCheckFailedException') {
+        throw Object.assign(new Error('O registro foi alterado por outro usuário.'), { statusCode: 409 });
+      }
+      throw error;
+    }
+
+    return withoutInfrastructure(next);
+  }
+
+  async deleteRecord(workspaceId, moduleId, recordType, recordId) {
+    const workspace = assertWorkspaceId(workspaceId);
+    const key = {
+      PK: workspacePk(workspace),
+      SK: recordSk(moduleId, recordType, recordId),
+    };
+    const current = await this.getRecord(workspace, moduleId, recordType, recordId);
+    if (!current) return null;
+
+    await this.client.send(new DeleteCommand({
+      TableName: this.tableName,
+      Key: key,
+      ConditionExpression: 'attribute_exists(PK) AND attribute_exists(SK)',
+    }));
+    return current;
   }
 
   async queryRecordsByModule(workspaceId, moduleId, { recordType, limit = 100, cursor } = {}) {
@@ -417,4 +499,12 @@ export function putEvent(client, tableName, workspaceId, input) {
 
 export function listEventsSince(client, tableName, workspaceId, since, options) {
   return new GenericRepository(client, tableName).listEventsSince(workspaceId, since, options);
+}
+
+export function updateRecord(client, tableName, workspaceId, moduleId, recordType, recordId, patch) {
+  return new GenericRepository(client, tableName).updateRecord(workspaceId, moduleId, recordType, recordId, patch);
+}
+
+export function deleteRecord(client, tableName, workspaceId, moduleId, recordType, recordId) {
+  return new GenericRepository(client, tableName).deleteRecord(workspaceId, moduleId, recordType, recordId);
 }

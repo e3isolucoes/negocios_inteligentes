@@ -1,0 +1,36 @@
+name: AWS API tests
+
+on:
+  pull_request:
+    paths:
+      - 'painel-obrigacoes/aws/api/**'
+      - 'modules/obrigacoes/contracts/**'
+      - '.github/workflows/aws-api-tests.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: painel-obrigacoes/aws/api
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Use Node.js 22
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Install dependencies
+        run: npm install --no-audit --no-fund
+
+      - name: Run API test suite
+        run: npm test
+
+      - name: Build Lambda bundles
+        run: npm run build
