@@ -1,5 +1,7 @@
 # E3I Negócios Inteligentes
 
+> **Repositório canônico:** este repositório é a fonte única de código para a plataforma, o Painel de Obrigações e suas evoluções AWS/Cognito. O repositório `e3isolucoes/portal-e3i-solucoes` é legado/histórico e não deve receber novas alterações do produto.
+
 Plataforma modular da E3I Soluções para centralizar soluções de gestão empresarial em uma única experiência.
 
 ## Arquitetura atual
