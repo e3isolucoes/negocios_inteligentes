@@ -791,6 +791,55 @@ jobs:
           echo "CORS credentialed validado para $ORIGIN."
         working-directory: .
 
+      - name: Inspect live Portal iframe contract
+        run: |
+          set -euo pipefail
+          rm -rf /tmp/portal-live && mkdir -p /tmp/portal-live
+          curl -fsSL https://portal.e3isolucoes.com.br/ -o /tmp/portal-live/index.html
+
+          python - <<'PY' >/tmp/portal-live/scripts.txt
+          import re
+          from urllib.parse import urljoin
+          html=open('/tmp/portal-live/index.html', encoding='utf-8', errors='ignore').read()
+          for src in re.findall(r'<script[^>]+src=["\x27]([^"\x27]+)', html, flags=re.I):
+              print(urljoin('https://portal.e3isolucoes.com.br/', src))
+          PY
+
+          i=0
+          while IFS= read -r url; do
+            [ -n "$url" ] || continue
+            i=$((i+1))
+            curl -fsSL "$url" -o "/tmp/portal-live/script-$i.js" || true
+          done </tmp/portal-live/scripts.txt
+
+          python - <<'PY'
+          from pathlib import Path
+          needles = [
+              'Não foi possível carregar o painel agora.',
+              'Failed to fetch',
+              'allow-same-origin',
+              'sandbox',
+              'iframe',
+              'portal_sso_code',
+          ]
+          found=[]
+          for path in Path('/tmp/portal-live').glob('*'):
+              if not path.is_file():
+                  continue
+              text=path.read_text(encoding='utf-8', errors='ignore')
+              matches=[needle for needle in needles if needle in text]
+              if matches:
+                  found.append((path.name, matches))
+                  for needle in matches:
+                      pos=text.find(needle)
+                      start=max(0,pos-500)
+                      end=min(len(text),pos+1200)
+                      print(f'--- {path.name} :: {needle} ---')
+                      print(text[start:end].replace('\n',' ')[:1800])
+          print('PORTAL_LIVE_MATCHES=', found)
+          PY
+        working-directory: .
+
       - name: Unauthenticated API smoke test
         run: |
           set -euo pipefail
