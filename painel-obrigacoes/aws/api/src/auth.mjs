@@ -53,6 +53,44 @@ export function resolveWorkspaceMembership(memberships, requestedWorkspaceId) {
   return membership;
 }
 
+
+function parseModuleGrantsClaim(value) {
+  if (value === undefined || value === null || value === '') return [];
+  try {
+    const parsed = typeof value === 'string' ? JSON.parse(value) : value;
+    if (!Array.isArray(parsed)) throw new Error('invalid');
+    return [...new Set(parsed.map(String).filter(Boolean))];
+  } catch {
+    throw Object.assign(new Error('Claims de autorização inválidos.'), { statusCode: 401 });
+  }
+}
+
+export function resolveTokenAuthorization(payload = {}, headers = {}) {
+  const workspaceId = String(payload['custom:workspace_id'] || '').trim();
+  const role = String(payload['custom:role'] || '').trim();
+  const allowedRoles = new Set(['member', 'manager', 'admin', 'super_admin']);
+
+  try {
+    workspacePk(workspaceId);
+  } catch {
+    throw Object.assign(new Error('Token sem workspace autorizado.'), { statusCode: 401 });
+  }
+  if (!allowedRoles.has(role)) {
+    throw Object.assign(new Error('Token sem papel autorizado.'), { statusCode: 401 });
+  }
+
+  const requested = String(headers?.['x-workspace-id'] || headers?.['X-Workspace-Id'] || '').trim();
+  if (requested && requested !== workspaceId) {
+    throw Object.assign(new Error('Workspace do cabeçalho diverge do token.'), { statusCode: 403 });
+  }
+
+  return {
+    workspaceId,
+    role,
+    moduleGrants: parseModuleGrantsClaim(payload['custom:module_grants']),
+  };
+}
+
 export async function authenticate(event, documentClient, tableName) {
   const token = bearer(event.headers);
   let tokenIssuer = '';
@@ -74,6 +112,20 @@ export async function authenticate(event, documentClient, tableName) {
   }
 
   const userId = payload['custom:legacy_user_id'] || payload['cognito:username'] || payload.sub;
+  const cognitoIssuer = String(process.env.AUTH_ISSUER || '').replace(/\/+$/, '');
+  if (cognitoIssuer && issuer === cognitoIssuer) {
+    const authorization = resolveTokenAuthorization(payload, event.headers);
+    return {
+      userId,
+      email: payload.email,
+      ...authorization,
+      issuer,
+      tokenId: payload.jti || null,
+    };
+  }
+
+  // Compatibilidade transitória do emissor secundário: tokens não-Cognito
+  // ainda resolvem membership no banco até a retirada completa desse fluxo.
   const result = await documentClient.send(new QueryCommand({
     TableName: tableName,
     IndexName: MEMBER_INDEX,

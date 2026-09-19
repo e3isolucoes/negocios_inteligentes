@@ -34,6 +34,9 @@ jobs:
         with:
           node-version: '22'
 
+      - name: Use AWS SAM CLI
+        uses: aws-actions/setup-sam@v2
+
       - name: Install dependencies
         run: npm install --no-audit --no-fund
 
@@ -50,3 +53,7 @@ jobs:
 
       - name: Build Lambda bundles
         run: npm run build
+
+      - name: Validate SAM template
+        run: sam validate --lint --template-file template.yaml
+        working-directory: painel-obrigacoes/aws
