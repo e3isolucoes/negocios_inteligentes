@@ -430,6 +430,7 @@ jobs:
                   'NotificationLogGroup',
                   'NotificationSchedulerRole',
                   'NotificationSchedule',
+                  'NotificationDeliveryFailuresAlarm',
               ]
               for name in notification_names:
                   if name in processed_resources:
