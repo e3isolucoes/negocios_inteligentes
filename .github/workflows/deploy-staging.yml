@@ -1,3 +1,4 @@
+# release-redeploy: operational-cors-session-completion 2026-09-20
 name: Deploy AWS staging
 # release-trigger: canonical-consolidation-20260920
 
