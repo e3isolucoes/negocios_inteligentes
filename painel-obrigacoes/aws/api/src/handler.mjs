@@ -32,6 +32,10 @@ function repositoryFor(entity) {
   return obrigacoesRepository.supports(entity) ? obrigacoesRepository : repository;
 }
 
+const OFFICIAL_BROWSER_ORIGINS = Object.freeze([
+  'https://obrigacoes.e3isolucoes.com.br',
+]);
+
 function normalizeOrigin(value) {
   if (!value) return '';
   try {
@@ -43,8 +47,12 @@ function normalizeOrigin(value) {
 }
 
 export function allowedOrigin(event) {
-  const allowlist = (process.env.ALLOWED_ORIGINS || process.env.ALLOWED_ORIGIN || '')
+  const configured = (process.env.ALLOWED_ORIGINS || process.env.ALLOWED_ORIGIN || '')
     .split(',').map((origin) => normalizeOrigin(origin.trim())).filter(Boolean);
+  const allowlist = [...new Set([
+    ...OFFICIAL_BROWSER_ORIGINS.map(normalizeOrigin),
+    ...configured,
+  ])];
   const requested = normalizeOrigin(event.headers?.origin || event.headers?.Origin);
   if (!requested) return allowlist[0] || '';
   return allowlist.includes(requested) ? requested : '';

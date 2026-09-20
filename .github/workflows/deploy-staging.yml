@@ -941,6 +941,21 @@ jobs:
             exit 1
           }
 
+          for RESOURCE in profiles completions checklist_items categories tax_regimes obligation_date_overrides; do
+            curl -sS -D "/tmp/${RESOURCE}-preflight.headers" -o "/tmp/${RESOURCE}-preflight.body" \
+              -X OPTIONS "$API/v1/${RESOURCE}?limit=1" \
+              -H "Origin: $ORIGIN" \
+              -H "Access-Control-Request-Method: GET" \
+              -H "Access-Control-Request-Headers: authorization,content-type,x-workspace-id"
+
+            tr -d '\r' <"/tmp/${RESOURCE}-preflight.headers" >"/tmp/${RESOURCE}-preflight.clean"
+            grep -Fqi "access-control-allow-origin: $ORIGIN" "/tmp/${RESOURCE}-preflight.clean" || {
+              echo "CORS GET preflight ausente em ${RESOURCE}."
+              cat "/tmp/${RESOURCE}-preflight.clean"
+              exit 1
+            }
+          done
+
           echo "CORS operacional validado para sessão, preflight GET e erros 401."
         working-directory: .
 
