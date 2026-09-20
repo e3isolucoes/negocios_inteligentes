@@ -64,3 +64,7 @@ npm test
 ## Próximas evoluções
 
 A estrutura foi preparada para novos módulos entrarem pelo registro central sem acoplar a navegação global às regras internas de cada produto.
+
+<!-- operational-redeploy: cors-session-completion-20260919 -->
+
+> Staging operacional: a branch `deploy/staging` publica o backend validado do Painel de Obrigações e executa smoke tests de CORS para `https://obrigacoes.e3isolucoes.com.br` antes de considerar a promoção concluída.
