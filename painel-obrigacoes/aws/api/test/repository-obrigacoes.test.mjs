@@ -200,6 +200,146 @@ test('todos os papéis operacionais podem concluir atividade com grant de obriga
   assert.equal(findBySk(client, 'RECORD#obrigacoes#occurrence#').length, roles.length);
 });
 
+test('validação orienta membro/gestor e não bloqueia admin da ferramenta', async () => {
+  const client = new MemoryDocumentClient();
+  const repository = new ObrigacoesRepository(client, 'table');
+  await seedActiveEntitlement(repository);
+
+  const activity = await repository.create({ ...auth, role: 'admin', userId: 'setup-admin' }, 'obligations', {
+    name: 'Entrega com validação',
+    frequency: 'mensal',
+    requires_validation: true,
+    validator_id: 'validator-user',
+  });
+
+  for (const role of ['member', 'manager']) {
+    const actor = { ...auth, role, userId: 'executor-' + role };
+    const completion = await repository.create(actor, 'completions', {
+      obligation_id: activity.id,
+      occurrence_date: role === 'member' ? '2026-10-10' : '2026-10-11',
+      done_by: actor.userId,
+      done_by_name: role,
+    });
+    assert.equal(completion.status, 'aguardando_validacao');
+    assert.equal(completion.validator_id, 'validator-user');
+    assert.ok(completion.submitted_at);
+  }
+
+  for (const role of ['admin', 'super_admin']) {
+    const actor = { ...auth, role, userId: 'executor-' + role };
+    const completion = await repository.create(actor, 'completions', {
+      obligation_id: activity.id,
+      occurrence_date: role === 'admin' ? '2026-10-12' : '2026-10-13',
+      done_by: actor.userId,
+      done_by_name: role,
+    });
+    assert.equal(completion.status, 'validada');
+    assert.equal(completion.validated_by, actor.userId);
+  }
+});
+
+test('conclusão explica validador ausente ou igual ao executor', async () => {
+  const client = new MemoryDocumentClient();
+  const repository = new ObrigacoesRepository(client, 'table');
+  await seedActiveEntitlement(repository);
+
+  const missing = await repository.create({ ...auth, role: 'admin', userId: 'setup-admin' }, 'obligations', {
+    name: 'Sem validador',
+    frequency: 'mensal',
+    requires_validation: true,
+  });
+
+  await assert.rejects(
+    repository.create(auth, 'completions', {
+      obligation_id: missing.id,
+      occurrence_date: '2026-10-20',
+      done_by: auth.userId,
+    }),
+    (error) => error.statusCode === 422 && /definir um validador/i.test(error.message),
+  );
+
+  const same = await repository.create({ ...auth, role: 'admin', userId: 'setup-admin' }, 'obligations', {
+    name: 'Validador igual',
+    frequency: 'mensal',
+    requires_validation: true,
+    validator_id: auth.userId,
+  });
+
+  await assert.rejects(
+    repository.create(auth, 'completions', {
+      obligation_id: same.id,
+      occurrence_date: '2026-10-21',
+      done_by: auth.userId,
+    }),
+    (error) => error.statusCode === 422 && /próprio validador/i.test(error.message),
+  );
+});
+
+test('comprovante obrigatório bloqueia com mensagem clara e sem movimento respeita exceção', async () => {
+  const client = new MemoryDocumentClient();
+  const repository = new ObrigacoesRepository(client, 'table');
+  await seedActiveEntitlement(repository);
+
+  const activity = await repository.create({ ...auth, role: 'admin', userId: 'setup-admin' }, 'obligations', {
+    name: 'Entrega documental',
+    frequency: 'mensal',
+    requires_attachment: true,
+    requires_attachment_no_movement: false,
+  });
+
+  await assert.rejects(
+    repository.create(auth, 'completions', {
+      obligation_id: activity.id,
+      occurrence_date: '2026-10-22',
+      movement_status: 'com_movimento',
+    }),
+    (error) => error.statusCode === 422 && /Comprovante obrigatório/i.test(error.message),
+  );
+
+  const noMovement = await repository.create(auth, 'completions', {
+    obligation_id: activity.id,
+    occurrence_date: '2026-10-23',
+    movement_status: 'sem_movimento',
+  });
+  assert.equal(noMovement.movement_status, 'sem_movimento');
+});
+
+test('checklist persistido precisa estar completo antes da conclusão', async () => {
+  const client = new MemoryDocumentClient();
+  const repository = new ObrigacoesRepository(client, 'table');
+  await seedActiveEntitlement(repository);
+
+  const activity = await repository.create({ ...auth, role: 'admin', userId: 'setup-admin' }, 'obligations', {
+    name: 'Entrega com checklist',
+    frequency: 'mensal',
+  });
+  const item = await repository.create(auth, 'checklist_items', {
+    obligation_id: activity.id,
+    description: 'Conferir base',
+    position: 0,
+  });
+
+  await assert.rejects(
+    repository.create(auth, 'completions', {
+      obligation_id: activity.id,
+      occurrence_date: '2026-10-24',
+    }),
+    (error) => error.statusCode === 422 && /Checklist incompleto/i.test(error.message),
+  );
+
+  await repository.update(auth, 'checklist_items', item.id, {
+    done: true,
+    completed_at: '2026-10-24T12:00:00.000Z',
+    version: item.version,
+  });
+
+  const completion = await repository.create(auth, 'completions', {
+    obligation_id: activity.id,
+    occurrence_date: '2026-10-24',
+  });
+  assert.equal(completion.status, 'validada');
+});
+
 test('checklist-item nasce desmarcado e continua editável pelo endpoint legado', async () => {
   const client = new MemoryDocumentClient();
   const repository = new ObrigacoesRepository(client, 'table');
