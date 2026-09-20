@@ -33,3 +33,41 @@ test('fluxo de conclusão continua orientando exatamente o que falta', async () 
   assert.match(board, /completionReadinessPreview/);
   assert.match(board, /Pronto para concluir/);
 });
+
+
+test('falhas operacionais não são confundidas com falta de permissão', async () => {
+  const app = await readFile(new URL('../painel-obrigacoes/js/app.js', import.meta.url), 'utf8');
+  const data = await readFile(new URL('../painel-obrigacoes/js/data.js', import.meta.url), 'utf8');
+
+  assert.match(app, /isSessionExpiredError/);
+  assert.match(app, /isConnectivityError/);
+  assert.match(app, /recoverExpiredSession/);
+  assert.match(app, /renderOperationalRetry/);
+  assert.match(app, /if \(isSessionExpiredError\(error\)\)/);
+  assert.match(app, /if \(isConnectivityError\(error\)\)/);
+  assert.match(data, /service_unreachable/);
+  assert.match(data, /session_expired/);
+  assert.match(data, /temporariamente indisponível/);
+});
+
+test('refresh 401 sempre vira sessão expirada tratável pela interface', async () => {
+  const client = await readFile(new URL('../painel-obrigacoes/js/api/awsDataClient.js', import.meta.url), 'utf8');
+
+  assert.match(client, /try \{[\s\S]*?accessToken = await refreshAccessToken\(\)/);
+  assert.match(client, /catch \(cause\)[\s\S]*?code: 'session_expired'/);
+});
+
+test('assets operacionais usam uma única versão e recuperação de senha está em form', async () => {
+  const [index, app, render] = await Promise.all([
+    readFile(new URL('../painel-obrigacoes/index.html', import.meta.url), 'utf8'),
+    readFile(new URL('../painel-obrigacoes/js/app.js', import.meta.url), 'utf8'),
+    readFile(new URL('../painel-obrigacoes/js/render.js', import.meta.url), 'utf8'),
+  ]);
+
+  assert.match(index, /id="resetPasswordForm"/);
+  assert.match(index, /id="newPasswordInput"[\s\S]*?type="password"/);
+  assert.equal((index.match(/20260919-operational-v2/g) || []).length, 3);
+  assert.doesNotMatch(index, /20260919-consolidated-v1/);
+  assert.doesNotMatch(app, /20260919-consolidated-v1/);
+  assert.doesNotMatch(render, /20260919-consolidated-v1/);
+});

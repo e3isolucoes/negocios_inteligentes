@@ -5,8 +5,8 @@ import {
   completePortalSso,
 } from './api/auth.js';
 import { bootstrapPortalSession } from './api/portalAuth.js';
-import { loadAll, doChangeModuleAccess, doChangeAdministrationAccess } from './data.js?v=20260919-consolidated-v1';
-import { render } from './render.js?v=20260919-consolidated-v1';
+import { loadAll, doChangeModuleAccess, doChangeAdministrationAccess } from './data.js?v=20260919-operational-v2';
+import { render } from './render.js?v=20260919-operational-v2';
 import {
   showLogin, wireLogin, showResetPasswordScreen, wireResetPasswordScreen,
 } from './ui/login.js';
@@ -17,11 +17,33 @@ function legacyRole(role) {
   return ({ member: 'membro', manager: 'gestor' })[role] || role;
 }
 
+function isSessionExpiredError(error) {
+  return error?.code === 'session_expired' || Number(error?.status) === 401;
+}
+
+function isConnectivityError(error) {
+  return error?.code === 'service_unreachable' || Number(error?.status) === 0;
+}
+
+async function recoverExpiredSession(message = 'Sua sessão expirou. Entre novamente para continuar.') {
+  await signOut().catch(() => {});
+  STATE.session = null;
+  STATE.profile = null;
+  showLogin(message);
+}
+
+function renderOperationalRetry(message, buttonId, retry) {
+  const app = document.getElementById('app');
+  app.innerHTML = '<div class="empty operational-retry"><strong>' + message + '</strong><br/><br/>'
+    + '<button class="btn-primary" id="' + buttonId + '">Reconectar</button></div>';
+  document.getElementById(buttonId)?.addEventListener('click', retry);
+}
+
 function wireModalBackdrop() {
   document.body.insertAdjacentHTML('beforeend', '<div class="modal-backdrop" id="modalBackdrop" hidden><div class="modal" id="modal"></div></div>');
   document.getElementById('modalBackdrop').addEventListener('click', (e) => {
     if (e.target.id === 'modalBackdrop') {
-      import('./ui/modal.js?v=20260919-consolidated-v1').then(({ closeModal }) => closeModal());
+      import('./ui/modal.js?v=20260919-operational-v2').then(({ closeModal }) => closeModal());
       import('./ui/ruleModal.js').then(({ closeRuleModal }) => closeRuleModal());
     }
   });
@@ -101,7 +123,20 @@ async function enterApp(session) {
         active: true,
       };
     } catch (error) {
-      console.error('Acesso AWS recusado', { status: error.status, requestId: error.requestId });
+      console.error('Falha ao verificar acesso AWS', { status: error.status, code: error.code, requestId: error.requestId });
+      if (isSessionExpiredError(error)) {
+        await recoverExpiredSession();
+        return;
+      }
+      if (isConnectivityError(error)) {
+        renderOperationalRetry(
+          'Não foi possível conectar ao serviço agora. Seus dados não foram alterados.',
+          'retryAwsAccess',
+          () => enterApp(session),
+        );
+        showToast('Conexão temporariamente indisponível. Tente reconectar.', 'error');
+        return;
+      }
       document.getElementById('app').innerHTML = '<div class="empty">Seu acesso ao Painel de Obrigações não está liberado para esta empresa.<br/><br/>'
         + '<button class="btn-primary" id="retryAwsAccess">Verificar novamente</button></div>';
       document.getElementById('retryAwsAccess')?.addEventListener('click', () => enterApp(session));
@@ -121,10 +156,23 @@ async function enterApp(session) {
     render();
   } catch (err) {
     console.error(err);
-    document.getElementById('app').innerHTML = '<div class="empty">Não foi possível carregar o painel agora. <br/><br/>'
-      + '<button class="btn-primary" id="retryBoot">Tentar de novo</button></div>';
-    document.getElementById('retryBoot')?.addEventListener('click', () => enterApp(session));
-    showToast('Falha ao conectar com o serviço de dados. Verifique sua internet.', 'error');
+    if (isSessionExpiredError(err)) {
+      await recoverExpiredSession();
+      return;
+    }
+    renderOperationalRetry(
+      isConnectivityError(err)
+        ? 'O serviço está temporariamente indisponível. Nenhuma alteração foi perdida.'
+        : 'Não foi possível carregar o painel agora.',
+      'retryBoot',
+      () => enterApp(session),
+    );
+    showToast(
+      isConnectivityError(err)
+        ? 'Serviço temporariamente indisponível. Use Reconectar.'
+        : 'Não foi possível carregar os dados. Tente novamente.',
+      'error',
+    );
   }
 }
 

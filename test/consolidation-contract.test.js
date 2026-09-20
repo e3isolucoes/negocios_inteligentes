@@ -44,7 +44,7 @@ test('assets do módulo usam a mesma versão consolidada de cache', async () => 
     readFile(new URL('../painel-obrigacoes/js/app.js', import.meta.url), 'utf8'),
     readFile(new URL('../painel-obrigacoes/js/render.js', import.meta.url), 'utf8'),
   ]);
-  const version = '20260919-consolidated-v1';
+  const version = '20260919-operational-v2';
   assert.match(index, new RegExp(version));
   assert.match(app, new RegExp(version));
   assert.match(render, new RegExp(version));

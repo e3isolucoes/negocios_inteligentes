@@ -104,7 +104,13 @@ export async function loadAll() {
     } else STATE.workspaces = [];
   } catch (err) {
     console.error('Falha ao carregar dados do painel', err);
-    STATE.connectionError = 'Não foi possível carregar os dados agora. Verifique sua conexão com a internet.';
+    if (err?.code === 'session_expired' || Number(err?.status) === 401) {
+      STATE.connectionError = 'Sua sessão expirou e precisa ser renovada.';
+    } else if (err?.code === 'service_unreachable' || Number(err?.status) === 0) {
+      STATE.connectionError = 'O serviço está temporariamente indisponível. Use Reconectar para tentar novamente.';
+    } else {
+      STATE.connectionError = err?.message || 'Não foi possível carregar os dados agora.';
+    }
     throw err;
   }
 }
