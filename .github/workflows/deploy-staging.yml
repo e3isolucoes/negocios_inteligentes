@@ -790,6 +790,46 @@ jobs:
           }
 
           echo "CORS credentialed validado para $ORIGIN."
+
+          curl -sS -D /tmp/obligations-preflight.headers -o /tmp/obligations-preflight.body \
+            -X OPTIONS "$API/v1/obligations?limit=1" \
+            -H "Origin: $ORIGIN" \
+            -H "Access-Control-Request-Method: GET" \
+            -H "Access-Control-Request-Headers: authorization,content-type,x-workspace-id"
+
+          tr -d '\r' </tmp/obligations-preflight.headers >/tmp/obligations-preflight.clean
+          grep -Fqi "access-control-allow-origin: $ORIGIN" /tmp/obligations-preflight.clean || {
+            echo "CORS GET preflight sem Access-Control-Allow-Origin esperado."
+            cat /tmp/obligations-preflight.clean
+            exit 1
+          }
+          grep -Fqi "authorization" /tmp/obligations-preflight.clean || {
+            echo "CORS GET preflight não permite header Authorization."
+            cat /tmp/obligations-preflight.clean
+            exit 1
+          }
+          grep -Fqi "x-workspace-id" /tmp/obligations-preflight.clean || {
+            echo "CORS GET preflight não permite x-workspace-id."
+            cat /tmp/obligations-preflight.clean
+            exit 1
+          }
+
+          STATUS="$(curl -sS -D /tmp/obligations-401.headers -o /tmp/obligations-401.body -w '%{http_code}' \
+            "$API/v1/obligations?limit=1" \
+            -H "Origin: $ORIGIN")"
+          test "$STATUS" = "401" || {
+            echo "Esperado 401 sem token em obligations; recebido $STATUS"
+            cat /tmp/obligations-401.body
+            exit 1
+          }
+          tr -d '\r' </tmp/obligations-401.headers >/tmp/obligations-401.clean
+          grep -Fqi "access-control-allow-origin: $ORIGIN" /tmp/obligations-401.clean || {
+            echo "Resposta 401 sem CORS; o navegador converteria isso em erro operacional."
+            cat /tmp/obligations-401.clean
+            exit 1
+          }
+
+          echo "CORS operacional validado para sessão, preflight GET e erros 401."
         working-directory: .
 
       - name: Inspect live Portal iframe contract
