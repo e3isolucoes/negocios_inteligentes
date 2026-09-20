@@ -2257,3 +2257,19 @@ body.embedded-module .foot{margin-top:18px}
   .complete-dialog .modal-actions .right{width:100%;}
   .complete-dialog .modal-actions button{flex:1;}
 }
+
+
+.team-completion-access{
+  display:grid;grid-template-columns:24px minmax(0,1fr);gap:2px 8px;align-items:center;
+  max-width:420px;margin-top:8px;padding:8px 10px;border:1px solid var(--ds-border,var(--line));
+  border-radius:8px;background:var(--ds-surface-subtle,#f8fafc);
+}
+.team-completion-access>span{
+  grid-row:1/3;display:grid;place-items:center;width:22px;height:22px;border-radius:50%;
+  font-size:12px;font-weight:800;
+}
+.team-completion-access strong{font-size:10.5px;color:var(--ink);}
+.team-completion-access small{font-size:9.5px;color:var(--ink-soft);}
+.team-completion-access.tone-green>span{background:var(--green-bg);color:var(--green);}
+.team-completion-access.tone-amber>span{background:var(--amber-bg);color:var(--amber);}
+.team-completion-access.tone-red>span{background:var(--red-bg);color:var(--red);}
