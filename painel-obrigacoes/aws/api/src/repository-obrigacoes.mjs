@@ -126,8 +126,9 @@ export class ObrigacoesRepository {
     let data;
     let dueDate;
 
+    let activity = null;
     if (entity !== 'obligations') {
-      await this.assertActivityExists(auth, input.obligation_id);
+      activity = await this.assertActivityExists(auth, input.obligation_id);
     }
 
     if (entity === 'obligations') {
@@ -140,12 +141,19 @@ export class ObrigacoesRepository {
       };
       dueDate = input.due_date || undefined;
     } else if (entity === 'completions') {
+      await this.assertCompletionReady(auth, activity, input);
       recordId = occurrenceRecordId(input);
+      const validationRequired = Boolean(activity?.requires_validation)
+        && !['admin', 'super_admin'].includes(auth.role);
       data = {
         ...publicData(input),
         id: recordId,
         version: 1,
         done_at: input.done_at || createdAt,
+        status: validationRequired ? 'aguardando_validacao' : 'validada',
+        validator_id: validationRequired ? activity.validator_id : (input.validator_id || activity?.validator_id || null),
+        submitted_at: validationRequired ? (input.submitted_at || createdAt) : null,
+        ...(validationRequired ? {} : { validated_at: createdAt, validated_by: auth.userId || null }),
         provenance: provenance(auth, 'create'),
       };
     } else {
@@ -244,6 +252,43 @@ export class ObrigacoesRepository {
         'evidence',
         evidenceRecordId(id),
       ).catch(() => null);
+    }
+  }
+
+  async assertCompletionReady(auth, activity, input) {
+    const checklist = (await this.listAll(auth, 'checklist-item'))
+      .filter((item) => item.obligation_id === activity.id);
+    const incomplete = checklist.filter((item) => !Boolean(item.done ?? item.completed));
+    if (incomplete.length) {
+      throw Object.assign(
+        new Error('Checklist incompleto: conclua ' + incomplete.length + ' item(ns) antes de finalizar a atividade.'),
+        { statusCode: 422, code: 'completion_checklist_incomplete' },
+      );
+    }
+
+    const noMovement = input.movement_status === 'sem_movimento';
+    const attachmentRequired = activity.requires_attachment === true
+      && !(noMovement && activity.requires_attachment_no_movement === false);
+    if (attachmentRequired && !input.attachment_path) {
+      throw Object.assign(
+        new Error('Comprovante obrigatório: anexe o arquivo antes de concluir a atividade.'),
+        { statusCode: 422, code: 'completion_attachment_required' },
+      );
+    }
+
+    const validationRequired = Boolean(activity.requires_validation)
+      && !['admin', 'super_admin'].includes(auth.role);
+    if (validationRequired && !activity.validator_id) {
+      throw Object.assign(
+        new Error('Validação pendente de configuração: a Gestão precisa definir um validador para esta atividade.'),
+        { statusCode: 422, code: 'completion_validator_missing' },
+      );
+    }
+    if (validationRequired && activity.validator_id === auth.userId) {
+      throw Object.assign(
+        new Error('Validação inválida: quem executa a atividade não pode ser o próprio validador.'),
+        { statusCode: 422, code: 'completion_validator_same_user' },
+      );
     }
   }
 
