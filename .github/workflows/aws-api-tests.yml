@@ -40,6 +40,10 @@ jobs:
       - name: Install dependencies
         run: npm install --no-audit --no-fund
 
+      - name: Install Azure API dependencies
+        run: npm ci --ignore-scripts
+        working-directory: api
+
       - name: Run API test suite
         run: npm test
 
