@@ -30,14 +30,26 @@ function repositoryFor(entity) {
   return obrigacoesRepository.supports(entity) ? obrigacoesRepository : repository;
 }
 
-function allowedOrigin(event) {
-  const allowlist = (process.env.ALLOWED_ORIGINS || process.env.ALLOWED_ORIGIN || '')
-    .split(',').map((origin) => origin.trim()).filter(Boolean);
-  const requested = event.headers?.origin || event.headers?.Origin;
-  return allowlist.includes(requested) ? requested : allowlist[0];
+function normalizeOrigin(value) {
+  if (!value) return '';
+  try {
+    const url = new URL(String(value));
+    return `${url.protocol}//${url.host}`;
+  } catch {
+    return String(value).replace(/\/$/, '');
+  }
 }
 
-function response(statusCode, body, event, extraHeaders = {}) {
+export function allowedOrigin(event) {
+  const allowlist = (process.env.ALLOWED_ORIGINS || process.env.ALLOWED_ORIGIN || '')
+    .split(',').map((origin) => normalizeOrigin(origin.trim())).filter(Boolean);
+  const requested = normalizeOrigin(event.headers?.origin || event.headers?.Origin);
+  if (!requested) return allowlist[0] || '';
+  return allowlist.includes(requested) ? requested : '';
+}
+
+export function response(statusCode, body, event, extraHeaders = {}) {
+  const origin = allowedOrigin(event);
   return {
     statusCode,
     headers: {
@@ -47,12 +59,14 @@ function response(statusCode, body, event, extraHeaders = {}) {
       'strict-transport-security': 'max-age=31536000; includeSubDomains',
       'x-content-type-options': 'nosniff',
       'referrer-policy': 'no-referrer',
-      'access-control-allow-origin': allowedOrigin(event),
-      'access-control-allow-credentials': 'true',
-      'access-control-allow-headers': 'authorization,content-type,x-workspace-id',
-      'access-control-allow-methods': 'GET,POST,PATCH,DELETE,OPTIONS',
-      'access-control-max-age': '600',
-      vary: 'origin',
+      ...(origin ? {
+        'access-control-allow-origin': origin,
+        'access-control-allow-credentials': 'true',
+        'access-control-allow-headers': 'authorization,content-type,x-workspace-id',
+        'access-control-allow-methods': 'GET,POST,PATCH,DELETE,OPTIONS',
+        'access-control-max-age': '600',
+        vary: 'origin',
+      } : {}),
       ...extraHeaders,
     },
     body: statusCode === 204 ? '' : JSON.stringify(body),
