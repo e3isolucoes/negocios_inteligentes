@@ -45,6 +45,46 @@ export function renderStats(items) {
   )).join('')}</section>`;
 }
 
+function completionReadinessPreview(ob) {
+  const progress = checklistProgress(ob.id);
+  const checklistMissing = progress ? Math.max(0, progress.total - progress.checked) : 0;
+  const validationRequired = Boolean(ob.requires_validation && !isAdmin());
+  const validatorReady = !validationRequired || (Boolean(ob.validator_id) && ob.validator_id !== STATE.session?.id);
+  const attachmentRequired = ob.requires_attachment !== false;
+
+  const steps = [
+    {
+      ready: checklistMissing === 0, neutral: false,
+      icon: checklistMissing === 0 ? '✓' : '!',
+      label: progress ? `Checklist ${progress.checked}/${progress.total}` : 'Sem checklist obrigatório',
+      detail: checklistMissing ? `${checklistMissing} item(ns) pendente(s)` : 'Pronto',
+    },
+    {
+      ready: !attachmentRequired, neutral: attachmentRequired,
+      icon: attachmentRequired ? '↥' : '✓',
+      label: attachmentRequired ? 'Comprovante no envio' : 'Comprovante opcional',
+      detail: attachmentRequired ? 'Será solicitado ao concluir' : 'Não bloqueia',
+    },
+    {
+      ready: validatorReady, neutral: false,
+      icon: validatorReady ? '✓' : '!',
+      label: validationRequired ? 'Validação' : 'Sem validação adicional',
+      detail: validationRequired ? (validatorReady ? 'Validador configurado' : 'Definir outro validador') : 'Não bloqueia',
+    },
+  ];
+
+  const hardBlockers = steps.filter((step) => !step.ready && !step.neutral).length;
+  const heading = hardBlockers
+    ? `Faltam ${hardBlockers} etapa${hardBlockers === 1 ? '' : 's'} antes de concluir`
+    : (attachmentRequired ? 'Quase pronto: anexe o comprovante ao concluir' : 'Pronto para concluir');
+
+  return '<div class="completion-card-readiness">'
+    + `<div class="completion-card-readiness-head"><strong>${escapeHtml(heading)}</strong><span>${hardBlockers ? 'Ação necessária' : 'Fluxo liberado'}</span></div>`
+    + '<div class="completion-card-steps">'
+      + steps.map((step) => `<div class="completion-card-step ${step.ready ? 'is-ready' : (step.neutral ? 'is-neutral' : 'is-blocked')}"><span class="completion-card-step-icon">${step.icon}</span><div><strong>${escapeHtml(step.label)}</strong><small>${escapeHtml(step.detail)}</small></div></div>`).join('')
+    + '</div>'
+  + '</div>';
+}
 function renderCard(it) {
   const {
     ob, active, displayDate, override, status: st, competence,
@@ -123,6 +163,7 @@ function renderCard(it) {
       + `<div><dt>Processo / área</dt><dd>${escapeHtml(ob.process_name || 'Não informado')} · ${escapeHtml(ob.area_name || 'Não informada')}</dd></div>`
     + '</dl>'
     + overrideNote
+    + (active ? completionReadinessPreview(ob) : '')
     + liveChecklistHtml
     + lastCompletionHtml
     + actionsHtml

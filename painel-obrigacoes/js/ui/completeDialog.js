@@ -99,6 +99,7 @@ export function completeDialog(obligationName, checklistItems, occurrenceDate, {
     let analysisToken = 0;
     let currentBlockers = [];
     let checklistSyncError = '';
+    let pendingChecklistSaves = 0;
 
     function setRequirement(key, ready, detail, waiting = false) {
       const row = backdrop.querySelector(`[data-requirement="${key}"]`);
@@ -112,7 +113,10 @@ export function completeDialog(obligationName, checklistItems, occurrenceDate, {
 
     function updateEnabled() {
       const checked = checkboxes.filter((item) => item.checked).length;
-      const allChecked = !checklistUnavailable && !checklistSyncError && checkboxes.every((item) => item.checked);
+      const allChecked = !checklistUnavailable
+        && !checklistSyncError
+        && pendingChecklistSaves === 0
+        && checkboxes.every((item) => item.checked);
       const hasFile = Boolean(fileInput.files && fileInput.files.length > 0);
       const effectiveRequirement = requiresAttachment && movementStatus?.value !== 'sem_movimento';
       const attachmentReady = hasFile || !effectiveRequirement;
@@ -123,6 +127,7 @@ export function completeDialog(obligationName, checklistItems, occurrenceDate, {
       const blockers = [];
       if (checklistUnavailable) blockers.push('Recarregue o checklist: não foi possível confirmar os itens obrigatórios.');
       else if (checklistSyncError) blockers.push(checklistSyncError);
+      else if (pendingChecklistSaves > 0) blockers.push('Aguarde: estamos salvando o checklist.');
       else if (!allChecked) blockers.push(`Conclua o checklist (${checked}/${checkboxes.length} itens marcados).`);
       if (!attachmentReady) blockers.push('Anexe o comprovante obrigatório.');
       if (!validationReady) {
@@ -142,7 +147,9 @@ export function completeDialog(obligationName, checklistItems, occurrenceDate, {
           ? 'Não foi possível carregar o checklist.'
           : (checklistSyncError
             ? 'A última alteração não foi salva.'
-            : (checkboxes.length ? `${checked}/${checkboxes.length} itens concluídos` : 'Nenhum checklist exigido.')),
+            : (pendingChecklistSaves > 0
+              ? 'Salvando alterações do checklist…'
+              : (checkboxes.length ? `${checked}/${checkboxes.length} itens concluídos` : 'Nenhum checklist exigido.'))),
       );
       setRequirement(
         'attachment',
@@ -190,6 +197,7 @@ export function completeDialog(obligationName, checklistItems, occurrenceDate, {
     checkboxes.forEach((checkbox) => checkbox.addEventListener('change', async () => {
       const requested = checkbox.checked;
       checklistSyncError = '';
+      pendingChecklistSaves += 1;
       checkbox.disabled = true;
       updateEnabled();
       try {
@@ -199,6 +207,7 @@ export function completeDialog(obligationName, checklistItems, occurrenceDate, {
         checkbox.checked = !requested;
         checklistSyncError = 'Não foi possível salvar a alteração do checklist. Tente novamente.';
       } finally {
+        pendingChecklistSaves = Math.max(0, pendingChecklistSaves - 1);
         checkbox.disabled = false;
         updateEnabled();
       }
