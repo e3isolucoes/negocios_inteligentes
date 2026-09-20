@@ -69,6 +69,11 @@ export function renderTeamManage() {
     const isActive = p.active !== false;
     const roleLabel = p.role === 'admin' ? 'Admin' : (p.role === 'gestor' ? 'Gestor' : 'Membro');
     const workspace = STATE.workspaces.find((item) => item.id === p.workspace_id);
+    const completionAccess = !isActive
+      ? { tone: 'red', label: 'Bloqueada', detail: 'acesso revogado' }
+      : (!p.workspace_id && p.role !== 'super_admin'
+        ? { tone: 'amber', label: 'Ajuste necessário', detail: 'sem empresa vinculada' }
+        : { tone: 'green', label: 'Habilitada', detail: 'pode concluir atividades' });
     const workspaceControl = isSuperUser() && p.role !== 'super_admin'
       ? `<label class="team-workspace-control">Vínculo empresarial<select class="icon-btn" data-action="team-change-workspace" data-id="${p.id}" aria-label="Alterar vínculo empresarial de ${escapeHtml(p.display_name || p.email)}"><option value="">Sem vínculo</option>${STATE.workspaces.map((item) => `<option value="${item.id}" ${item.id === p.workspace_id ? 'selected' : ''}>${escapeHtml(item.name)}</option>`).join('')}</select></label>`
       : '';
@@ -92,6 +97,7 @@ export function renderTeamManage() {
           + (isActive ? '' : ' · <span class="badge badge-revoked">Revogado</span>')
         + '</div>'
         + `<div class="mgmt-sub">Empresa vinculada: <strong>${escapeHtml(workspace?.name || 'nenhuma')}</strong></div>`
+        + `<div class="team-completion-access tone-${completionAccess.tone}"><span aria-hidden="true">${completionAccess.tone === 'green' ? '✓' : '!'}</span><strong>Conclusão de atividades: ${completionAccess.label}</strong><small>${completionAccess.detail}</small></div>`
         + administrationControl
         + moduleControl
       + '</div>'
