@@ -192,12 +192,10 @@ export async function doMarkDone(obligationId, onDone) {
     validatorReady,
     validatorLabel,
     checklistUnavailable,
-    onToggleItem: (itemId, checkedVal) => {
-      toggleChecklistItem(itemId, checkedVal)
-        .then((updated) => {
-          STATE.checklistItems = STATE.checklistItems.map((it) => (it.id === itemId ? updated : it));
-        })
-        .catch((err) => console.error('Falha ao salvar o item do checklist', err));
+    onToggleItem: async (itemId, checkedVal) => {
+      const updated = await toggleChecklistItem(itemId, checkedVal);
+      STATE.checklistItems = STATE.checklistItems.map((it) => (it.id === itemId ? updated : it));
+      return updated;
     },
   });
   if (!result) return; // cancelado — nada foi salvo
