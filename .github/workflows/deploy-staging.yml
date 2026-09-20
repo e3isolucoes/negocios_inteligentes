@@ -833,7 +833,7 @@ jobs:
             exit 1
           }
 
-          for RESOURCE in profiles completions checklist_items categories tax_regimes obligation_date_overrides; do
+          for RESOURCE in profiles completions checklist_items categories tax_regimes tax_regime_rules obligation_date_overrides audit_log; do
             curl -sS -D "/tmp/${RESOURCE}-preflight.headers" -o "/tmp/${RESOURCE}-preflight.body" \
               -X OPTIONS "$API/v1/${RESOURCE}?limit=1" \
               -H "Origin: $ORIGIN" \
