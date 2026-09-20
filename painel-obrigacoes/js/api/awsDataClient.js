@@ -3,6 +3,16 @@ import { STATE } from '../state.js';
 
 const sleep = (milliseconds) => new Promise((resolve) => setTimeout(resolve, milliseconds));
 let requestQueue = Promise.resolve();
+const versions = new Map();
+
+function remember(entity, record) {
+  if (!record?.id) return record;
+  const version = Number.isInteger(record.version) && record.version > 0 ? record.version : 1;
+  versions.set(`${entity}:${record.id}`, version);
+  return Number.isInteger(record.version) && record.version > 0
+    ? record
+    : { ...record, version };
+}
 
 function waitForApiSlot() {
   const slot = requestQueue.then(() => sleep(1100));
@@ -18,7 +28,7 @@ export function awsApiBase() {
   return (globalThis.E3I_CONFIG?.awsApiBase || '').replace(/\/$/, '');
 }
 
-async function request(path, { method = 'GET', body } = {}) {
+export async function awsRequest(path, { method = 'GET', body } = {}) {
   const API_BASE = awsApiBase();
   if (!API_BASE) throw new Error('Backend AWS ainda não foi configurado.');
   const accessToken = await getAccessToken();
@@ -47,23 +57,31 @@ async function request(path, { method = 'GET', body } = {}) {
 }
 
 export const awsData = Object.freeze({
-  listPage: (entity, { limit = 100, cursor } = {}) => request(`${entity}?limit=${encodeURIComponent(limit)}${cursor ? `&cursor=${encodeURIComponent(cursor)}` : ''}`),
+  listPage: async (entity, { limit = 100, cursor } = {}) => {
+    const page = await awsRequest(`${entity}?limit=${encodeURIComponent(limit)}${cursor ? `&cursor=${encodeURIComponent(cursor)}` : ''}`);
+    for (const record of page.items || []) remember(entity, record);
+    return page;
+  },
   list: async (entity) => {
     const records = [];
     let cursor;
     do {
-      const page = await request(`${entity}?limit=100${cursor ? `&cursor=${encodeURIComponent(cursor)}` : ''}`);
+      const page = await awsRequest(`${entity}?limit=100${cursor ? `&cursor=${encodeURIComponent(cursor)}` : ''}`);
       if (Array.isArray(page)) return page;
-      records.push(...(page.items || []));
+      records.push(...(page.items || []).map(record => remember(entity, record)));
       cursor = page.cursor;
     } while (cursor);
     return records;
   },
-  get: (entity, id) => request(`${entity}/${encodeURIComponent(id)}`),
-  create: (entity, values) => request(entity, { method: 'POST', body: values }),
-  update: (entity, id, values) => request(`${entity}/${encodeURIComponent(id)}`, { method: 'PATCH', body: values }),
-  remove: (entity, id) => request(`${entity}/${encodeURIComponent(id)}`, { method: 'DELETE' }),
-  uploadUrl: (values) => request('files/upload-url', { method: 'POST', body: values }),
-  downloadUrl: (path) => request('files/download-url', { method: 'POST', body: { path } }),
-  me: () => request('me')
+  get: async (entity, id) => remember(entity, await awsRequest(`${entity}/${encodeURIComponent(id)}`)),
+  create: async (entity, values) => remember(entity, await awsRequest(entity, { method: 'POST', body: values })),
+  update: async (entity, id, values) => {
+    const key = `${entity}:${id}`;
+    if (!versions.has(key)) remember(entity, await awsRequest(`${entity}/${encodeURIComponent(id)}`));
+    return remember(entity, await awsRequest(`${entity}/${encodeURIComponent(id)}`, { method: 'PATCH', body: { ...values, version: versions.get(key) } }));
+  },
+  remove: (entity, id) => awsRequest(`${entity}/${encodeURIComponent(id)}`, { method: 'DELETE' }),
+  uploadUrl: (values) => awsRequest('files/upload-url', { method: 'POST', body: values }),
+  downloadUrl: (path) => awsRequest('files/download-url', { method: 'POST', body: { path } }),
+  me: () => awsRequest('me')
 });

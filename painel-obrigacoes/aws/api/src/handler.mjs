@@ -18,6 +18,7 @@ import {
 import { Repository } from './repository.mjs';
 import { GenericRepository } from './repository-generic.mjs';
 import { ObrigacoesRepository } from './repository-obrigacoes.mjs';
+import { AdminService } from './admin.mjs';
 
 const ddb = DynamoDBDocumentClient.from(new DynamoDBClient({}), { marshallOptions: { removeUndefinedValues: true } });
 const s3 = new S3Client({});
@@ -25,6 +26,7 @@ const cognito = new CognitoIdentityProviderClient({});
 const repository = new Repository(ddb, process.env.TABLE_NAME);
 const genericRepository = new GenericRepository(ddb, process.env.TABLE_NAME);
 const obrigacoesRepository = new ObrigacoesRepository(ddb, process.env.TABLE_NAME);
+const adminService = new AdminService(ddb, cognito, process.env.TABLE_NAME, process.env.USER_POOL_ID);
 
 function repositoryFor(entity) {
   return obrigacoesRepository.supports(entity) ? obrigacoesRepository : repository;
@@ -177,6 +179,42 @@ export async function handler(event) {
 
     const auth = await authenticate(event, ddb, process.env.TABLE_NAME);
     if (method === 'GET' && path === 'me') return response(200, { userId: auth.userId, email: auth.email, workspaceId: auth.workspaceId, role: auth.role, moduleGrants: auth.moduleGrants }, event);
+
+    if (method === 'GET' && path === 'admin/workspaces') {
+      return response(200, await adminService.listWorkspaces(auth, listOptions(event)), event);
+    }
+    if (method === 'POST' && path === 'admin/workspaces') {
+      return response(201, await adminService.createWorkspace(auth, parseBody(event)), event);
+    }
+    const adminWorkspaceMatch = path.match(/^admin\/workspaces\/([^/]+)$/);
+    if (method === 'PATCH' && adminWorkspaceMatch) {
+      return response(200, await adminService.updateWorkspace(
+        auth,
+        decodeURIComponent(adminWorkspaceMatch[1]),
+        parseBody(event),
+      ), event);
+    }
+
+    if (method === 'POST' && path === 'admin/users') {
+      return response(201, await adminService.inviteUser(auth, parseBody(event)), event);
+    }
+    const membershipMatch = path.match(/^admin\/users\/([^/]+)\/memberships\/([^/]+)$/);
+    if (method === 'PATCH' && membershipMatch) {
+      return response(200, await adminService.setMembership(
+        auth,
+        decodeURIComponent(membershipMatch[1]),
+        decodeURIComponent(membershipMatch[2]),
+        parseBody(event),
+      ), event);
+    }
+    if (method === 'DELETE' && membershipMatch) {
+      await adminService.removeMembership(
+        auth,
+        decodeURIComponent(membershipMatch[1]),
+        decodeURIComponent(membershipMatch[2]),
+      );
+      return response(204, {}, event);
+    }
 
     const entitlementRoute = path.match(/^workspaces\/([^/]+)\/entitlements$/);
     if (method === 'GET' && entitlementRoute) {

@@ -41,11 +41,6 @@ function memberSyncTransaction(tableName, workspaceId, profileId, profile, patch
     ':updatedAt': profile.updated_at || now(),
   };
 
-  if (Object.hasOwn(patch || {}, 'module_access')) {
-    setParts.push('module_grants = :moduleGrants');
-    values[':moduleGrants'] = Array.isArray(profile.module_access) ? profile.module_access : [];
-  }
-
   return {
     Update: {
       TableName: tableName,
@@ -60,6 +55,30 @@ function memberSyncTransaction(tableName, workspaceId, profileId, profile, patch
 
 export class Repository {
   constructor(client, tableName) { this.client = client; this.tableName = tableName; }
+
+  requireSafeProfileUpdate(auth, current, patch) {
+    if (!patch || typeof patch !== 'object') return;
+    const toolAdmin = ['admin', 'super_admin'].includes(auth?.role);
+    if (!toolAdmin) {
+      const allowed = new Set(['module_access', 'display_name', 'version']);
+      const forbidden = Object.keys(patch).filter((key) => !allowed.has(key));
+      if (forbidden.length) {
+        throw Object.assign(new Error('A delegação administrativa não permite alterar papel, vínculo ou concessões de segurança.'), { statusCode: 403 });
+      }
+    }
+    if (Object.hasOwn(patch, 'role')) {
+      if (!toolAdmin) throw Object.assign(new Error('Somente o Admin da Ferramenta pode alterar papéis de acesso.'), { statusCode: 403 });
+      if ((patch.role === 'super_admin' || current?.role === 'super_admin') && auth.role !== 'super_admin') {
+        throw Object.assign(new Error('Somente super_admin pode conceder ou alterar este papel.'), { statusCode: 403 });
+      }
+      if (current?.id === auth.userId && patch.role !== current.role) {
+        throw Object.assign(new Error('Não é permitido alterar o próprio papel.'), { statusCode: 403 });
+      }
+    }
+    if ((Object.hasOwn(patch, 'active') || Object.hasOwn(patch, 'module_grants')) && !toolAdmin) {
+      throw Object.assign(new Error('Somente o Admin da Ferramenta pode alterar este controle de acesso.'), { statusCode: 403 });
+    }
+  }
 
   async list(auth, entity, { limit = 100, cursor } = {}) {
     const config = entityConfig(entity);
@@ -123,6 +142,7 @@ export class Repository {
     const key = { PK: tenantPk(auth.workspaceId), SK: entitySk(entity, id, patch) };
     const current = (await this.client.send(new GetCommand({ TableName: this.tableName, Key: key, ConsistentRead: true }))).Item;
     if (!current) throw Object.assign(new Error('Registro não encontrado.'), { statusCode: 404 });
+    if (entity === 'profiles') this.requireSafeProfileUpdate(auth, publicRecord(current), patch);
     const immutable = new Set(['PK', 'SK', 'workspace_id', 'toolId', 'environment', 'entityType', 'schemaVersion', 'created_at', 'id']);
     const safePatch = Object.fromEntries(Object.entries(patch).filter(([keyName]) => !immutable.has(keyName)));
     const expectedVersion = Number(patch.version ?? current.version ?? 1);
