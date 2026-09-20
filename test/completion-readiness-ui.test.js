@@ -66,3 +66,12 @@ test('Admin consegue auditar visualmente o acesso de conclusão de cada usuário
   assert.match(auth, /if \(!grant \|\| grant === 'obrigacoes'\) return;/);
   assert.match(auth, /Capacidades administrativas são sempre deny-by-default/);
 });
+
+
+test('checklist AWS normaliza done para completed usado pela interface', async () => {
+  const checklist = await readFile(new URL('../painel-obrigacoes/js/api/checklist.js', import.meta.url), 'utf8');
+  assert.match(checklist, /function normalizeChecklistItem/);
+  assert.match(checklist, /item\.completed \?\? item\.done/);
+  assert.match(checklist, /\.map\(normalizeChecklistItem\)/);
+  assert.match(checklist, /normalizeChecklistItem\(await awsData\.update/);
+});
