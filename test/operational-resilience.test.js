@@ -66,7 +66,7 @@ test('assets operacionais usam uma única versão e recuperação de senha está
 
   assert.match(index, /id="resetPasswordForm"/);
   assert.match(index, /id="newPasswordInput"[\s\S]*?type="password"/);
-  assert.equal((index.match(/20260919-operational-v2/g) || []).length, 3);
+  assert.equal((index.match(/20260920-canonical-v1/g) || []).length, 3);
   assert.doesNotMatch(index, /20260919-consolidated-v1/);
   assert.doesNotMatch(app, /20260919-consolidated-v1/);
   assert.doesNotMatch(render, /20260919-consolidated-v1/);
