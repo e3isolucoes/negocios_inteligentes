@@ -1,0 +1,90 @@
+name: Azure Static Web App Production
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - 'painel-obrigacoes/**'
+      - 'api/**'
+      - 'staticwebapp.config.json'
+      - 'test/**'
+      - '.github/workflows/deploy-frontend.yml'
+  push:
+    branches: [main]
+    paths:
+      - 'painel-obrigacoes/**'
+      - 'api/**'
+      - 'staticwebapp.config.json'
+      - '.github/workflows/deploy-frontend.yml'
+  workflow_dispatch:
+
+concurrency:
+  group: canonical-frontend-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: '24'
+
+      - name: Install Azure API dependencies
+        run: npm ci --ignore-scripts
+        working-directory: api
+
+      - name: Install AWS API dependencies
+        run: npm install --no-audit --no-fund
+        working-directory: painel-obrigacoes/aws/api
+
+      - name: Run platform tests
+        run: npm test
+
+      - name: Run AWS API tests
+        run: npm test
+        working-directory: painel-obrigacoes/aws/api
+
+      - name: Check browser module syntax
+        run: |
+          node --check painel-obrigacoes/js/api/auth.js
+          node --check painel-obrigacoes/js/api/awsDataClient.js
+          node --check painel-obrigacoes/js/app.js
+          node --check painel-obrigacoes/js/render.js
+          node --check platform/shell.js
+          node --check api/checklist-suggestions.js
+
+  deploy:
+    needs: validate
+    if: github.event_name != 'pull_request'
+    runs-on: ubuntu-latest
+    environment: production
+    env:
+      AZURE_DEPLOY_TOKEN: ${{ secrets.AZURE_STATIC_WEB_APPS_API_TOKEN }}
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Prepare Static Web Apps configuration
+        run: cp staticwebapp.config.json painel-obrigacoes/staticwebapp.config.json
+
+      - name: Require Azure production token
+        run: |
+          test -n "$AZURE_DEPLOY_TOKEN" || {
+            echo "::error::AZURE_STATIC_WEB_APPS_API_TOKEN não está configurado em e3isolucoes/negocios_inteligentes."
+            exit 1
+          }
+
+      - name: Deploy canonical frontend and Azure API
+        uses: Azure/static-web-apps-deploy@v1
+        with:
+          azure_static_web_apps_api_token: ${{ env.AZURE_DEPLOY_TOKEN }}
+          repo_token: ${{ secrets.GITHUB_TOKEN }}
+          action: upload
+          app_location: painel-obrigacoes
+          api_location: api
+          output_location: ''
+          skip_app_build: true
