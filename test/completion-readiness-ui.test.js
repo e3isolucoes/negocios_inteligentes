@@ -35,3 +35,15 @@ test('fluxo não ignora falha de checklist e preserva erro específico do backen
   assert.match(data, /showToast\(err\?\.message/);
   assert.doesNotMatch(data, /A Gestão precisa definir quem validará esta tarefa antes do envio\.'[\s\S]{0,50}return;/);
 });
+
+
+test('frontend mantém conclusão disponível para todos os papéis operacionais ativos', async () => {
+  const [board, state] = await Promise.all([
+    readFile(new URL('../painel-obrigacoes/js/ui/board.js', import.meta.url), 'utf8'),
+    readFile(new URL('../painel-obrigacoes/js/state.js', import.meta.url), 'utf8'),
+  ]);
+
+  assert.match(board, /if \(active\) \{[\s\S]*?data-action="done"/);
+  assert.match(state, /export function canWriteObligations\(\)[\s\S]*?'membro'[\s\S]*?'member'/);
+  assert.match(state, /'gestor'[\s\S]*?'manager'[\s\S]*?'admin'[\s\S]*?'super_admin'|\['super_admin', 'admin', 'gestor', 'manager', 'membro', 'member'\]/);
+});
