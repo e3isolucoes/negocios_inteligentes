@@ -2,9 +2,16 @@ import { supabase } from '../supabaseClient.js';
 import { withCurrentWorkspace, withCurrentWorkspaceMany } from './workspaceContext.js';
 import { awsData, isAwsDataBackend } from './awsDataClient.js';
 
+function normalizeChecklistItem(item) {
+  if (!item) return item;
+  const completed = Boolean(item.completed ?? item.done);
+  return { ...item, completed, done: completed };
+}
+
 export async function fetchChecklistItems(obligationId) {
   if (isAwsDataBackend()) return (await awsData.list('checklist_items'))
     .filter((item) => item.obligation_id === obligationId)
+    .map(normalizeChecklistItem)
     .sort((a, b) => Number(a.position || 0) - Number(b.position || 0));
   const { data, error } = await supabase
     .from('checklist_items')
@@ -19,7 +26,7 @@ export async function fetchChecklistItems(obligationId) {
 // e mostrar o percentual de conclusão ao vivo em cada cartão do Painel,
 // sem precisar abrir cada obrigação uma a uma (ver STATE.checklistItems).
 export async function fetchAllChecklistItems() {
-  if (isAwsDataBackend()) return (await awsData.list('checklist_items')).sort((a, b) => Number(a.position || 0) - Number(b.position || 0));
+  if (isAwsDataBackend()) return (await awsData.list('checklist_items')).map(normalizeChecklistItem).sort((a, b) => Number(a.position || 0) - Number(b.position || 0));
   const { data, error } = await supabase
     .from('checklist_items')
     .select('*')
@@ -34,7 +41,7 @@ export async function fetchAllChecklistItems() {
 // concluído" na obrigação inteira), sem precisar de permissão de admin
 // para editar a tabela inteira (isso protegeria só descrição/posição).
 export async function toggleChecklistItem(itemId, done) {
-  if (isAwsDataBackend()) return awsData.update('checklist_items', itemId, { done, completed_at: done ? new Date().toISOString() : null });
+  if (isAwsDataBackend()) return normalizeChecklistItem(await awsData.update('checklist_items', itemId, { done, completed_at: done ? new Date().toISOString() : null }));
   const { data, error } = await supabase.rpc('set_checklist_item_done', { p_item_id: itemId, p_done: done });
   if (error) throw error;
   return data;
@@ -56,7 +63,7 @@ export async function resetChecklistItems(obligationId) {
 }
 
 export async function createChecklistItem({ obligationId, description, position }) {
-  if (isAwsDataBackend()) return awsData.create('checklist_items', { obligation_id: obligationId, description, position });
+  if (isAwsDataBackend()) return normalizeChecklistItem(await awsData.create('checklist_items', { obligation_id: obligationId, description, position }));
   const { data, error } = await supabase
     .from('checklist_items')
     .insert(withCurrentWorkspace({ obligation_id: obligationId, description, position }))

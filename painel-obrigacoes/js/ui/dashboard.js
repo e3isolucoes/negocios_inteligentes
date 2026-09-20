@@ -171,7 +171,7 @@ function riskSection(items) {
     const prio = priorityInfo(ob.priority);
     return '<div class="mgmt-row">'
       + '<div class="mgmt-main">'
-        + `<div class="mgmt-name">${escapeHtml(ob.name)} <span class="badge" style="border-color:var(--red);color:var(--red);">${escapeHtml(prio.label)}</span> <span class="status-pill tone-${status.tone}">${escapeHtml(status.label)}</span></div>`
+        + `<div class="mgmt-name">${escapeHtml(ob.name)} <span class="badge badge-danger">${escapeHtml(prio.label)}</span> <span class="status-pill tone-${status.tone}">${escapeHtml(status.label)}</span></div>`
         + `<div class="mgmt-sub">🏢 ${escapeHtml(companyName(ob.company_id) || '—')} · 👤 ${escapeHtml(ob.responsible || '—')} · vencimento ${displayDate ? fmtBR(displayDate) : '—'} (${deltaLabel(status.diffDays)})${override ? ' · 📌 data ajustada' : ''}</div>`
       + '</div>'
     + '</div>';

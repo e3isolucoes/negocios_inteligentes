@@ -1,5 +1,7 @@
 import { createHash, randomUUID } from 'node:crypto';
+import { GetCommand } from '@aws-sdk/lib-dynamodb';
 import { requireModuleGrant, requireRole } from './auth.mjs';
+import { entitySk, tenantPk } from './model.mjs';
 import { GenericRepository } from './repository-generic.mjs';
 
 const MODULE_ID = 'obrigacoes';
@@ -13,6 +15,40 @@ const ENTITY_MAP = Object.freeze({
 
 function timestamp() {
   return new Date().toISOString();
+}
+
+const OBLIGATION_STRUCTURE_FIELDS = Object.freeze([
+  'name', 'category', 'company_id', 'responsible', 'responsible_id', 'frequency',
+  'day_of_month', 'month', 'months', 'due_date', 'competence_offset_months', 'notes',
+  'activity_type', 'process_name', 'area_name', 'predecessor_id', 'module_key',
+  'requires_attachment', 'requires_attachment_no_movement', 'priority',
+  'adjust_business_day', 'day_type', 'business_day_shift', 'requires_validation', 'validator_id',
+]);
+
+function sameValue(left, right) {
+  return JSON.stringify(left ?? null) === JSON.stringify(right ?? null);
+}
+
+function obligationStructureChanged(current, patch) {
+  return OBLIGATION_STRUCTURE_FIELDS.some((field) => (
+    Object.hasOwn(patch || {}, field) && !sameValue(current?.[field], patch[field])
+  ));
+}
+
+function snapshotFields(obligation, companyName = '') {
+  const snapshot = {};
+  for (const field of OBLIGATION_STRUCTURE_FIELDS) snapshot[field] = obligation?.[field] ?? null;
+  snapshot.company_name = companyName || '';
+  snapshot.source_version = Number.isInteger(obligation?.version) ? obligation.version : null;
+  return snapshot;
+}
+
+function competenceDateForOccurrence(obligation, occurrenceDate) {
+  const match = /^(\d{4})-(\d{2})/.exec(String(occurrenceDate || ''));
+  if (!match) return null;
+  const offset = Math.max(0, Math.min(36, Number(obligation?.competence_offset_months || 0)));
+  const date = new Date(Date.UTC(Number(match[1]), Number(match[2]) - 1 - offset, 1));
+  return `${date.getUTCFullYear()}-${String(date.getUTCMonth() + 1).padStart(2, '0')}-01`;
 }
 
 function provenance(auth, operation, previous) {
@@ -80,7 +116,25 @@ function mapConditional(error) {
 
 export class ObrigacoesRepository {
   constructor(client, tableName) {
+    this.client = client;
+    this.tableName = tableName;
     this.generic = new GenericRepository(client, tableName);
+  }
+
+  async obligationSnapshot(auth, obligation) {
+    let companyName = '';
+    if (obligation?.company_id) {
+      const company = (await this.client.send(new GetCommand({
+        TableName: this.tableName,
+        Key: {
+          PK: tenantPk(auth.workspaceId),
+          SK: entitySk('companies', obligation.company_id),
+        },
+        ConsistentRead: true,
+      }))).Item;
+      companyName = String(company?.name || '');
+    }
+    return snapshotFields(obligation, companyName);
   }
 
   supports(entity) {
@@ -126,9 +180,9 @@ export class ObrigacoesRepository {
     let data;
     let dueDate;
 
-    if (entity !== 'obligations') {
-      await this.assertActivityExists(auth, input.obligation_id);
-    }
+    const activity = entity !== 'obligations'
+      ? legacyRecord(await this.assertActivityExists(auth, input.obligation_id))
+      : null;
 
     if (entity === 'obligations') {
       recordId = input.id || randomUUID();
@@ -140,12 +194,17 @@ export class ObrigacoesRepository {
       };
       dueDate = input.due_date || undefined;
     } else if (entity === 'completions') {
+      if (input.done_by && input.done_by !== auth.userId) {
+        throw Object.assign(new Error('Não é permitido concluir em nome de outro usuário.'), { statusCode: 403 });
+      }
+      this.rejectClientManagedCompletionMetadata(input, true);
       recordId = occurrenceRecordId(input);
+      const defaults = await this.completionCreateDefaults(auth, activity, input, createdAt);
       data = {
         ...publicData(input),
+        ...defaults,
         id: recordId,
         version: 1,
-        done_at: input.done_at || createdAt,
         provenance: provenance(auth, 'create'),
       };
     } else {
@@ -195,8 +254,23 @@ export class ObrigacoesRepository {
     const current = await this.get(auth, entity, id);
     if (!current) throw Object.assign(new Error('Registro não encontrado.'), { statusCode: 404 });
 
+    let publicPatch = publicData(patch);
+    if (entity === 'completions') {
+      this.rejectClientManagedCompletionMetadata(publicPatch, false, current);
+      publicPatch = this.completionTransition(auth, current, publicPatch);
+      publicPatch.competence_date = current.competence_date ?? publicPatch.competence_date;
+      publicPatch.obligation_snapshot = current.obligation_snapshot ?? publicPatch.obligation_snapshot;
+    }
+    if (entity === 'obligations' && obligationStructureChanged(current, patch)) {
+      const snapshot = await this.obligationSnapshot(auth, current);
+      publicPatch.structure_history = [
+        ...(Array.isArray(current.structure_history) ? current.structure_history : []),
+        { effective_until: timestamp(), snapshot },
+      ];
+    }
+
     const data = {
-      ...publicData(patch),
+      ...publicPatch,
       id: current.id,
       provenance: provenance(auth, 'update', current.provenance),
     };
@@ -244,6 +318,105 @@ export class ObrigacoesRepository {
         'evidence',
         evidenceRecordId(id),
       ).catch(() => null);
+    }
+  }
+
+  async completionCreateDefaults(auth, activity, input, createdAt) {
+    const checklistItems = await this.requireCompletionReady(auth, activity, input);
+    const requiresValidation = activity.requires_validation === true
+      && !['admin', 'super_admin'].includes(auth.role);
+
+    if (requiresValidation && !activity.validator_id) {
+      throw Object.assign(new Error('A Gestão ainda não definiu o validador desta tarefa.'), { statusCode: 400 });
+    }
+    if (requiresValidation && activity.validator_id === auth.userId) {
+      throw Object.assign(new Error('O executor não pode validar o próprio trabalho.'), { statusCode: 400 });
+    }
+
+    const snapshot = await this.obligationSnapshot(auth, activity);
+    const checked = checklistItems.filter((item) => item.done === true || item.completed === true).length;
+    return {
+      done_at: input.done_at || createdAt,
+      done_by: auth.userId,
+      status: requiresValidation ? 'aguardando_validacao' : 'validada',
+      validator_id: activity.validator_id || null,
+      submitted_at: input.submitted_at || createdAt,
+      checklist_total: checklistItems.length,
+      checklist_checked: checked,
+      competence_date: competenceDateForOccurrence(activity, input.occurrence_date),
+      obligation_snapshot: snapshot,
+      ...(requiresValidation ? {} : { validated_at: createdAt, validated_by: auth.userId }),
+    };
+  }
+
+  async requireCompletionReady(auth, activity, input) {
+    const checklistItems = (await this.listAll(auth, 'checklist-item'))
+      .filter((item) => item.obligation_id === activity.id);
+    const pending = checklistItems.filter((item) => !(item.done === true || item.completed === true));
+    if (pending.length) {
+      throw Object.assign(new Error(`Checklist incompleto: faltam ${pending.length} item(ns) antes de concluir.`), { statusCode: 400 });
+    }
+
+    const noMovementException = activity.activity_type === 'obrigacao_acessoria'
+      && activity.requires_attachment_no_movement === false
+      && input.movement_status === 'sem_movimento';
+    const requiresAttachment = activity.requires_attachment !== false && !noMovementException;
+    if (requiresAttachment && !input.attachment_path) {
+      throw Object.assign(new Error('Comprovante obrigatório: anexe o arquivo antes de concluir.'), { statusCode: 400 });
+    }
+    return checklistItems;
+  }
+
+  completionTransition(auth, current, patch) {
+    const currentStatus = current.status || 'validada';
+    if (patch.status === undefined || patch.status === currentStatus) return patch;
+    const nowValue = timestamp();
+
+    if (currentStatus === 'aguardando_validacao' && ['validada', 'rejeitada'].includes(patch.status)) {
+      if (current.validator_id !== auth.userId) {
+        throw Object.assign(new Error('Somente o validador designado pode validar.'), { statusCode: 403 });
+      }
+      if (patch.status === 'rejeitada' && String(patch.rejection_reason || '').trim().length < 10) {
+        throw Object.assign(new Error('Descreva o que precisa ser corrigido (mínimo 10 caracteres).'), { statusCode: 400 });
+      }
+      return {
+        ...patch,
+        validator_id: current.validator_id,
+        validated_by: auth.userId,
+        validated_at: nowValue,
+        ...(patch.status === 'validada'
+          ? { rejection_reason: null, rejected_at: null }
+          : { rejected_at: nowValue }),
+      };
+    }
+
+    if (currentStatus === 'rejeitada' && patch.status === 'aguardando_validacao') {
+      if (current.done_by !== auth.userId) {
+        throw Object.assign(new Error('Somente o executor pode reenviar para validação.'), { statusCode: 403 });
+      }
+      return {
+        ...patch,
+        rejection_reason: null,
+        rejected_at: null,
+        validated_at: null,
+        validated_by: null,
+        submitted_at: nowValue,
+      };
+    }
+
+    throw Object.assign(new Error('Transição de estado inválida.'), { statusCode: 409 });
+  }
+
+  rejectClientManagedCompletionMetadata(patch, creating, current = null) {
+    const serverFields = ['done_at', 'validator_id', 'submitted_at', 'validated_at', 'validated_by', 'rejected_at'];
+    if (creating) serverFields.push('status', 'rejection_reason');
+    const statusChanges = !creating && patch.status !== undefined && patch.status !== current?.status;
+    const forbidden = serverFields.filter((field) => (
+      patch[field] !== undefined && (!statusChanges || field === 'done_at')
+    ));
+    if (!creating && patch.done_by !== undefined) forbidden.push('done_by');
+    if (forbidden.length) {
+      throw Object.assign(new Error(`Campo controlado pelo servidor: ${forbidden[0]}.`), { statusCode: 403 });
     }
   }
 

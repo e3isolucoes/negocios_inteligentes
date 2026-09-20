@@ -1,4 +1,7 @@
 import { SUPABASE_URL, SUPABASE_ANON_KEY } from '../config.js';
+import { awsRequest, isAwsDataBackend } from './awsDataClient.js';
+
+export const isAwsAdminBackend = () => isAwsDataBackend() || globalThis.E3I_CONFIG?.authBackend === 'cognito';
 
 // Cria a conta de autenticação para um usuário novo, a partir da tela de
 // Gerenciar → Equipe. Usa uma instância TEMPORÁRIA e independente do
@@ -20,7 +23,10 @@ import { SUPABASE_URL, SUPABASE_ANON_KEY } from '../config.js';
 // um admin confirmar manualmente em Authentication → Users no painel do
 // Supabase). Isso é uma configuração do projeto, não algo que dá para
 // contornar a partir do cliente.
-export async function createUserAccount({ email, password, displayName }) {
+export async function createUserAccount({ email, password, displayName, workspaceId, role }) {
+  if (isAwsAdminBackend()) {
+    return awsRequest('admin/users', { method: 'POST', body: { email, displayName, workspaceId, role } });
+  }
   const tempClient = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY, {
     auth: { persistSession: false, autoRefreshToken: false, detectSessionInUrl: false },
   });
@@ -31,4 +37,12 @@ export async function createUserAccount({ email, password, displayName }) {
   });
   if (error) throw error;
   return data; // { user, session } — session vem null se a confirmação de e-mail estiver habilitada
+}
+
+export function updateUserMembership(userId, workspaceId, patch) {
+  return awsRequest(`admin/users/${encodeURIComponent(userId)}/memberships/${encodeURIComponent(workspaceId)}`, { method: 'PATCH', body: patch });
+}
+
+export function removeUserMembership(userId, workspaceId) {
+  return awsRequest(`admin/users/${encodeURIComponent(userId)}/memberships/${encodeURIComponent(workspaceId)}`, { method: 'DELETE' });
 }

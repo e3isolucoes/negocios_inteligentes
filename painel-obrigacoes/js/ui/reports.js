@@ -55,7 +55,7 @@ export function renderReports() {
     byResponsible.get(respLabel).push(c);
   });
 
-  let html = '<div class="empty" style="text-align:left;padding:14px 16px;margin-bottom:14px;">'
+  let html = '<div class="report-note">'
     + 'Taxa de cumprimento no prazo — obrigações concluídas nos últimos 6 meses. '
     + '"No prazo" considera a conclusão registrada até a data de vencimento da ocorrência.'
     + '</div>';

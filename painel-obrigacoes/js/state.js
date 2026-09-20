@@ -8,7 +8,7 @@ export const STATE = {
   activeModule: 'all',
   manageSection: 'obligations', // 'obligations' | 'companies' | 'team' | 'import' | 'rules' (dentro da aba Gerenciar)
   filters: {
-    empresa: 'all', category: 'all', responsible: 'all', status: 'all', receipt: 'all',
+    empresa: 'all', category: 'all', responsible: 'all', status: 'all', receipt: 'all', competence: 'all',
   },
   editingId: null,
   editingCompanyId: null,
@@ -43,6 +43,16 @@ export function isAdmin() {
   return ['super_admin', 'admin'].includes(STATE.profile?.role) && STATE.profile?.active !== false;
 }
 
+export function hasAdministrationAccess(profile = STATE.profile) {
+  if (!profile || profile.active === false) return false;
+  if (['super_admin', 'admin'].includes(String(profile.role || '').toLowerCase())) return true;
+  const grants = [
+    ...(Array.isArray(profile.module_grants) ? profile.module_grants : []),
+    ...(Array.isArray(profile.module_access) ? profile.module_access : []),
+  ];
+  return grants.includes('administracao');
+}
+
 export function isSuperUser() {
   return STATE.profile?.role === 'super_admin' && STATE.profile?.active !== false;
 }
@@ -50,7 +60,8 @@ export function isSuperUser() {
 // Gestores mantêm a operação sem receber o poder reservado ao administrador
 // de criar contas, trocar papéis ou revogar acessos.
 export function isManager() {
-  return ['super_admin', 'admin', 'gestor'].includes(STATE.profile?.role) && STATE.profile?.active !== false;
+  const role = String(STATE.profile?.role || '').trim().toLowerCase();
+  return ['super_admin', 'admin', 'gestor', 'manager'].includes(role) && STATE.profile?.active !== false;
 }
 
 // A visibilidade da carteira é uma permissão própria: não deve depender da
@@ -61,9 +72,80 @@ export function canViewAllObligations() {
   return isManager();
 }
 
+// Criar, editar e excluir atividades/obrigações é uma permissão operacional
+// compartilhada por todos os papéis ativos do workspace. Poderes de gestão
+// (equipe, acessos, relatórios etc.) continuam separados em isManager/isAdmin.
+export function canWriteObligations() {
+  return ['super_admin', 'admin', 'gestor', 'manager', 'membro', 'member'].includes(STATE.profile?.role)
+    && STATE.profile?.active !== false;
+}
+
 export function canAccessModule(moduleKey) {
   if (isAdmin() || STATE.profile?.module_access == null) return true;
   return Array.isArray(STATE.profile.module_access) && STATE.profile.module_access.includes(moduleKey);
+}
+
+// A competência é o período de movimento/apuração e não o vencimento.
+// O deslocamento fica na própria obrigação para que uma recorrência como
+// "vence dia 20 do mês seguinte" continue automática em todos os ciclos.
+// Ex.: vencimento 20/09/2026 + competence_offset_months=1 => 08/2026.
+export function competenceForOccurrence(obligation, occurrenceDate) {
+  if (!occurrenceDate) return null;
+
+  let year;
+  let monthIndex;
+  if (occurrenceDate instanceof Date) {
+    if (Number.isNaN(occurrenceDate.getTime())) return null;
+    year = occurrenceDate.getFullYear();
+    monthIndex = occurrenceDate.getMonth();
+  } else {
+    const match = /^(\d{4})-(\d{2})/.exec(String(occurrenceDate));
+    if (!match) return null;
+    year = Number(match[1]);
+    monthIndex = Number(match[2]) - 1;
+  }
+
+  const parsedOffset = Number(obligation?.competence_offset_months ?? 0);
+  const offset = Number.isInteger(parsedOffset) ? Math.max(0, Math.min(36, parsedOffset)) : 0;
+  return new Date(year, monthIndex - offset, 1);
+}
+
+export function obligationForCompletion(completion, currentObligation = null) {
+  const base = currentObligation || { id: completion?.obligation_id || null };
+  const directSnapshot = completion?.obligation_snapshot;
+  if (directSnapshot && typeof directSnapshot === 'object' && !Array.isArray(directSnapshot)) {
+    return { ...base, ...directSnapshot };
+  }
+
+  const completedAt = String(completion?.done_at || completion?.created_at || '');
+  const history = Array.isArray(base?.structure_history)
+    ? base.structure_history
+      .filter((entry) => entry?.snapshot && entry?.effective_until)
+      .slice()
+      .sort((a, b) => String(a.effective_until).localeCompare(String(b.effective_until)))
+    : [];
+  const historical = completedAt
+    ? history.find((entry) => completedAt <= String(entry.effective_until))
+    : null;
+  return historical ? { ...base, ...historical.snapshot } : base;
+}
+
+export function competenceForCompletion(completion, currentObligation = null) {
+  const frozen = String(completion?.competence_date || '');
+  const match = /^(\d{4})-(\d{2})/.exec(frozen);
+  if (match) return new Date(Number(match[1]), Number(match[2]) - 1, 1);
+  const historicalObligation = obligationForCompletion(completion, currentObligation);
+  return competenceForOccurrence(historicalObligation, completion?.occurrence_date);
+}
+
+export function competenceKey(dateValue) {
+  if (!(dateValue instanceof Date) || Number.isNaN(dateValue.getTime())) return '';
+  return `${dateValue.getFullYear()}-${String(dateValue.getMonth() + 1).padStart(2, '0')}`;
+}
+
+export function competenceLabel(dateValue) {
+  if (!(dateValue instanceof Date) || Number.isNaN(dateValue.getTime())) return '—';
+  return `${String(dateValue.getMonth() + 1).padStart(2, '0')}/${dateValue.getFullYear()}`;
 }
 
 // Mapa obligation_id -> Set(occurrence_date "YYYY-MM-DD") para consultas
@@ -113,6 +195,8 @@ export function overrideForOccurrence(obligationId, rawDateKey) {
 // data EFETIVA depois de aplicar uma eventual exceção (ver
 // obligation_date_overrides) — é essa que deve aparecer na tela e que
 // define o status (atrasada/vence em breve/no prazo).
+// A competência também usa `active`, não `displayDate`: uma prorrogação do
+// vencimento não muda o período de movimento da obrigação.
 // Regras do catálogo (obligation_rules) vinculadas a um regime tributário.
 export function rulesForRegime(regimeId) {
   const ruleIds = new Set(
@@ -147,8 +231,9 @@ export function activeOccurrences() {
     const override = active ? overrideForOccurrence(ob.id, fmtKey(active)) : null;
     const displayDate = override ? new Date(`${override.override_date}T00:00:00`) : active;
     const status = statusOf(displayDate);
+    const competence = competenceForOccurrence(ob, active);
     return {
-      ob, active, displayDate, override, status,
+      ob, active, displayDate, override, status, competence,
     };
   });
 }
