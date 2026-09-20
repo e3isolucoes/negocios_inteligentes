@@ -200,7 +200,7 @@ export function checklistProgress(obligationId) {
     .filter((i) => i.obligation_id === obligationId)
     .sort((a, b) => a.position - b.position);
   if (!items.length) return null;
-  const checked = items.filter((i) => i.completed).length;
+  const checked = items.filter((i) => Boolean(i.completed ?? i.done)).length;
   return {
     items, total: items.length, checked, pct: Math.round((checked / items.length) * 100),
   };
