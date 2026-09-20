@@ -63,7 +63,14 @@ export async function awsRequest(path, { method = 'GET', body } = {}) {
     }
     if (response.status === 401 && !authRetried) {
       authRetried = true;
-      accessToken = await refreshAccessToken();
+      try {
+        accessToken = await refreshAccessToken();
+      } catch (cause) {
+        throw Object.assign(
+          new Error('Sua sessão expirou. Entre novamente.'),
+          { status: 401, code: 'session_expired', cause },
+        );
+      }
       if (!accessToken) {
         throw Object.assign(new Error('Sua sessão expirou. Entre novamente.'), { status: 401, code: 'session_expired' });
       }
