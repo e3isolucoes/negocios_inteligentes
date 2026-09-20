@@ -98,6 +98,7 @@ export function completeDialog(obligationName, checklistItems, occurrenceDate, {
     let analyzing = false;
     let analysisToken = 0;
     let currentBlockers = [];
+    let checklistSyncError = '';
 
     function setRequirement(key, ready, detail, waiting = false) {
       const row = backdrop.querySelector(`[data-requirement="${key}"]`);
@@ -111,7 +112,7 @@ export function completeDialog(obligationName, checklistItems, occurrenceDate, {
 
     function updateEnabled() {
       const checked = checkboxes.filter((item) => item.checked).length;
-      const allChecked = !checklistUnavailable && checkboxes.every((item) => item.checked);
+      const allChecked = !checklistUnavailable && !checklistSyncError && checkboxes.every((item) => item.checked);
       const hasFile = Boolean(fileInput.files && fileInput.files.length > 0);
       const effectiveRequirement = requiresAttachment && movementStatus?.value !== 'sem_movimento';
       const attachmentReady = hasFile || !effectiveRequirement;
@@ -121,6 +122,7 @@ export function completeDialog(obligationName, checklistItems, occurrenceDate, {
 
       const blockers = [];
       if (checklistUnavailable) blockers.push('Recarregue o checklist: não foi possível confirmar os itens obrigatórios.');
+      else if (checklistSyncError) blockers.push(checklistSyncError);
       else if (!allChecked) blockers.push(`Conclua o checklist (${checked}/${checkboxes.length} itens marcados).`);
       if (!attachmentReady) blockers.push('Anexe o comprovante obrigatório.');
       if (!validationReady) {
@@ -138,7 +140,9 @@ export function completeDialog(obligationName, checklistItems, occurrenceDate, {
         allChecked,
         checklistUnavailable
           ? 'Não foi possível carregar o checklist.'
-          : (checkboxes.length ? `${checked}/${checkboxes.length} itens concluídos` : 'Nenhum checklist exigido.'),
+          : (checklistSyncError
+            ? 'A última alteração não foi salva.'
+            : (checkboxes.length ? `${checked}/${checkboxes.length} itens concluídos` : 'Nenhum checklist exigido.')),
       );
       setRequirement(
         'attachment',
@@ -183,9 +187,21 @@ export function completeDialog(obligationName, checklistItems, occurrenceDate, {
       fieldError.classList.add('hidden');
     }
 
-    checkboxes.forEach((checkbox) => checkbox.addEventListener('change', () => {
+    checkboxes.forEach((checkbox) => checkbox.addEventListener('change', async () => {
+      const requested = checkbox.checked;
+      checklistSyncError = '';
+      checkbox.disabled = true;
       updateEnabled();
-      onToggleItem?.(checkbox.getAttribute('data-item-id'), checkbox.checked);
+      try {
+        await onToggleItem?.(checkbox.getAttribute('data-item-id'), requested);
+      } catch (error) {
+        console.error('Falha ao persistir item do checklist', error);
+        checkbox.checked = !requested;
+        checklistSyncError = 'Não foi possível salvar a alteração do checklist. Tente novamente.';
+      } finally {
+        checkbox.disabled = false;
+        updateEnabled();
+      }
     }));
     ocrConfirmCheckbox.addEventListener('change', updateEnabled);
     movementStatus?.addEventListener('change', updateEnabled);
