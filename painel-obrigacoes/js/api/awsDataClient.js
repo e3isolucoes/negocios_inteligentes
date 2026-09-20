@@ -42,6 +42,10 @@ async function request(path, { method = 'GET', body } = {}) {
         cache: 'no-store'
       });
     } catch (cause) {
+      if (method === 'GET' && attempt < 2) {
+        await sleep(350 * (attempt + 1));
+        continue;
+      }
       throw Object.assign(
         new Error('Não foi possível conectar ao serviço da ferramenta. Tente novamente; se persistir, use Atualizar para restabelecer a conexão.'),
         { status: 0, code: 'service_unreachable', cause },
