@@ -29,3 +29,40 @@ test('CORS normaliza barra final e não reflete origem não autorizada', () => {
   assert.equal(result.headers['access-control-allow-origin'], undefined);
   assert.equal(result.headers['access-control-allow-credentials'], undefined);
 });
+
+
+test('CORS mantém a origem oficial mesmo quando a configuração de ambiente deriva', () => {
+  const previousAllowedOrigins = process.env.ALLOWED_ORIGINS;
+  const previousAllowedOrigin = process.env.ALLOWED_ORIGIN;
+  delete process.env.ALLOWED_ORIGINS;
+  delete process.env.ALLOWED_ORIGIN;
+
+  try {
+    assert.equal(
+      allowedOrigin({ headers: { origin: 'https://obrigacoes.e3isolucoes.com.br' } }),
+      'https://obrigacoes.e3isolucoes.com.br',
+    );
+
+    const result = response(
+      401,
+      { error: 'Autenticação obrigatória.' },
+      { headers: { origin: 'https://obrigacoes.e3isolucoes.com.br' } },
+    );
+    assert.equal(result.headers['access-control-allow-origin'], 'https://obrigacoes.e3isolucoes.com.br');
+    assert.equal(result.headers['access-control-allow-credentials'], 'true');
+  } finally {
+    if (previousAllowedOrigins === undefined) delete process.env.ALLOWED_ORIGINS;
+    else process.env.ALLOWED_ORIGINS = previousAllowedOrigins;
+    if (previousAllowedOrigin === undefined) delete process.env.ALLOWED_ORIGIN;
+    else process.env.ALLOWED_ORIGIN = previousAllowedOrigin;
+  }
+});
+
+test('CORS preflight expõe todos os métodos operacionais do painel', () => {
+  const result = response(204, {}, { headers: { origin: 'https://obrigacoes.e3isolucoes.com.br' } });
+  assert.match(result.headers['access-control-allow-methods'], /GET/);
+  assert.match(result.headers['access-control-allow-methods'], /POST/);
+  assert.match(result.headers['access-control-allow-methods'], /PATCH/);
+  assert.match(result.headers['access-control-allow-methods'], /DELETE/);
+  assert.match(result.headers['access-control-allow-methods'], /OPTIONS/);
+});
