@@ -97,6 +97,8 @@ export function completeDialog(obligationName, checklistItems, occurrenceDate, {
     let ocrResult = null;
     let analyzing = false;
     let analysisToken = 0;
+    let pendingChecklistSaves = 0;
+    let checklistSaveError = '';
     let currentBlockers = [];
 
     function setRequirement(key, ready, detail, waiting = false) {
@@ -121,6 +123,8 @@ export function completeDialog(obligationName, checklistItems, occurrenceDate, {
 
       const blockers = [];
       if (checklistUnavailable) blockers.push('Recarregue o checklist: não foi possível confirmar os itens obrigatórios.');
+      else if (checklistSaveError) blockers.push(checklistSaveError);
+      else if (pendingChecklistSaves > 0) blockers.push('Aguarde: estamos salvando o checklist.');
       else if (!allChecked) blockers.push(`Conclua o checklist (${checked}/${checkboxes.length} itens marcados).`);
       if (!attachmentReady) blockers.push('Anexe o comprovante obrigatório.');
       if (!validationReady) {
@@ -138,7 +142,11 @@ export function completeDialog(obligationName, checklistItems, occurrenceDate, {
         allChecked,
         checklistUnavailable
           ? 'Não foi possível carregar o checklist.'
-          : (checkboxes.length ? `${checked}/${checkboxes.length} itens concluídos` : 'Nenhum checklist exigido.'),
+          : (checklistSaveError
+            ? 'Falha ao salvar um item do checklist.'
+            : (pendingChecklistSaves > 0
+              ? 'Salvando alterações do checklist…'
+              : (checkboxes.length ? `${checked}/${checkboxes.length} itens concluídos` : 'Nenhum checklist exigido.'))),
       );
       setRequirement(
         'attachment',
@@ -183,9 +191,21 @@ export function completeDialog(obligationName, checklistItems, occurrenceDate, {
       fieldError.classList.add('hidden');
     }
 
-    checkboxes.forEach((checkbox) => checkbox.addEventListener('change', () => {
+    checkboxes.forEach((checkbox) => checkbox.addEventListener('change', async () => {
+      const previous = !checkbox.checked;
+      checklistSaveError = '';
+      pendingChecklistSaves += 1;
       updateEnabled();
-      onToggleItem?.(checkbox.getAttribute('data-item-id'), checkbox.checked);
+      try {
+        await onToggleItem?.(checkbox.getAttribute('data-item-id'), checkbox.checked);
+      } catch (error) {
+        console.error('Falha ao persistir checklist durante a conclusão', error);
+        checkbox.checked = previous;
+        checklistSaveError = 'Não foi possível salvar o checklist. Tente marcar o item novamente.';
+      } finally {
+        pendingChecklistSaves = Math.max(0, pendingChecklistSaves - 1);
+        updateEnabled();
+      }
     }));
     ocrConfirmCheckbox.addEventListener('change', updateEnabled);
     movementStatus?.addEventListener('change', updateEnabled);
