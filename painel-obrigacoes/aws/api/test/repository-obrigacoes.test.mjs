@@ -154,7 +154,7 @@ test('occurrence mantém unicidade por atividade e data e cria evidence metadata
     repository.create(auth, 'completions', {
       obligation_id: activity.id,
       occurrence_date: '2026-09-30',
-      done_by: 'user-b',
+      done_by: 'user-a',
     }),
     (error) => error.statusCode === 409,
   );
@@ -173,6 +173,7 @@ test('todos os papéis operacionais podem concluir atividade com grant de obriga
     name: 'Fechamento mensal',
     frequency: 'mensal',
     competence_offset_months: 0,
+    requires_attachment: false,
   });
 
   const roles = ['member', 'manager', 'admin', 'super_admin'];
@@ -290,10 +291,15 @@ test('excluir activity remove occurrence, checklist-item e evidence do mesmo wor
     frequency: 'mensal',
   });
 
-  await repository.create(auth, 'checklist_items', {
+  const deletionChecklist = await repository.create(auth, 'checklist_items', {
     obligation_id: activity.id,
     description: 'Passo 1',
     position: 0,
+  });
+  await repository.update(auth, 'checklist_items', deletionChecklist.id, {
+    done: true,
+    completed_at: '2026-09-30T10:00:00.000Z',
+    version: deletionChecklist.version,
   });
 
   await repository.create(auth, 'completions', {
@@ -308,6 +314,118 @@ test('excluir activity remove occurrence, checklist-item e evidence do mesmo wor
   assert.equal(findBySk(client, 'RECORD#obrigacoes#occurrence#').length, 0);
   assert.equal(findBySk(client, 'RECORD#obrigacoes#checklist-item#').length, 0);
   assert.equal(findBySk(client, 'RECORD#obrigacoes#evidence#').length, 0);
+});
+
+test('backend bloqueia conclusão sem comprovante obrigatório e checklist pendente', async () => {
+  const client = new MemoryDocumentClient();
+  const repository = new ObrigacoesRepository(client, 'table');
+  await seedActiveEntitlement(repository);
+
+  const attachmentActivity = await repository.create(auth, 'obligations', {
+    name: 'Com comprovante',
+    frequency: 'mensal',
+    requires_attachment: true,
+  });
+
+  await assert.rejects(
+    repository.create(auth, 'completions', {
+      obligation_id: attachmentActivity.id,
+      occurrence_date: '2026-09-25',
+      done_by: auth.userId,
+    }),
+    (error) => error.statusCode === 400 && /Comprovante obrigatório/i.test(error.message),
+  );
+
+  const checklistActivity = await repository.create(auth, 'obligations', {
+    name: 'Com checklist',
+    frequency: 'mensal',
+    requires_attachment: false,
+  });
+  await repository.create(auth, 'checklist_items', {
+    obligation_id: checklistActivity.id,
+    description: 'Conferir dados',
+    position: 0,
+  });
+
+  await assert.rejects(
+    repository.create(auth, 'completions', {
+      obligation_id: checklistActivity.id,
+      occurrence_date: '2026-09-26',
+      done_by: auth.userId,
+    }),
+    (error) => error.statusCode === 400 && /Checklist incompleto/i.test(error.message),
+  );
+});
+
+test('backend aplica ciclo de validação e restringe aprovação ao validador designado', async () => {
+  const client = new MemoryDocumentClient();
+  const repository = new ObrigacoesRepository(client, 'table');
+  await seedActiveEntitlement(repository);
+
+  const activity = await repository.create(auth, 'obligations', {
+    name: 'Atividade validada',
+    frequency: 'mensal',
+    requires_attachment: false,
+    requires_validation: true,
+    validator_id: 'validator-a',
+  });
+
+  const completion = await repository.create(auth, 'completions', {
+    obligation_id: activity.id,
+    occurrence_date: '2026-09-27',
+    done_by: auth.userId,
+    done_by_name: 'Executor',
+  });
+
+  assert.equal(completion.status, 'aguardando_validacao');
+  assert.equal(completion.validator_id, 'validator-a');
+  assert.equal(completion.done_by, auth.userId);
+
+  await assert.rejects(
+    repository.update(auth, 'completions', completion.id, {
+      status: 'validada',
+      version: completion.version,
+    }),
+    (error) => error.statusCode === 403 && /validador designado/i.test(error.message),
+  );
+
+  const validator = {
+    ...auth,
+    userId: 'validator-a',
+    email: 'validator@empresa.test',
+    role: 'member',
+  };
+  const approved = await repository.update(validator, 'completions', completion.id, {
+    status: 'validada',
+    version: completion.version,
+  });
+
+  assert.equal(approved.status, 'validada');
+  assert.equal(approved.validated_by, 'validator-a');
+  assert.ok(approved.validated_at);
+});
+
+test('executor não pode concluir quando ele próprio é o validador obrigatório', async () => {
+  const client = new MemoryDocumentClient();
+  const repository = new ObrigacoesRepository(client, 'table');
+  await seedActiveEntitlement(repository);
+
+  const activity = await repository.create(auth, 'obligations', {
+    name: 'Segregação de função',
+    frequency: 'mensal',
+    requires_attachment: false,
+    requires_validation: true,
+    validator_id: auth.userId,
+  });
+
+  await assert.rejects(
+    repository.create(auth, 'completions', {
+      obligation_id: activity.id,
+      occurrence_date: '2026-09-28',
+      done_by: auth.userId,
+    }),
+    (error) => error.statusCode === 400 && /não pode validar o próprio trabalho/i.test(error.message),
+  );
 });
 
 test('admin sem entitlement do módulo recebe 403', async () => {
@@ -355,6 +473,7 @@ test('conclusão congela competência e estrutura e alterações futuras preserv
     frequency: 'mensal',
     competence_offset_months: 1,
     module_key: 'fiscal',
+    requires_attachment: false,
   });
 
   const completion = await repository.create(auth, 'completions', {
@@ -392,6 +511,7 @@ test('update de conclusão não permite reescrever snapshot histórico', async (
     name: 'EFD-Reinf',
     frequency: 'mensal',
     competence_offset_months: 1,
+    requires_attachment: false,
   });
   const completion = await repository.create(auth, 'completions', {
     obligation_id: activity.id,
