@@ -6,6 +6,47 @@ const usesCognito = () => config().authBackend === 'cognito';
 const storageKey = 'e3i.cognito.session';
 const listeners = new Set();
 let recoveryEmail = '';
+let browserRefreshPromise = null;
+
+function apiBase() {
+  return String(config().awsApiBase || '').replace(/\/$/, '');
+}
+
+async function browserSessionCall(path, { method = 'POST', body } = {}) {
+  const base = apiBase();
+  if (!base) throw Object.assign(new Error('Serviço de sessão AWS não configurado.'), { code: 'session_service_unavailable' });
+  const response = await fetch(`${base}/v1/${path}`, {
+    method,
+    headers: body === undefined ? {} : { 'content-type': 'application/json' },
+    body: body === undefined ? undefined : JSON.stringify(body),
+    credentials: 'include',
+    cache: 'no-store',
+  });
+  if (response.status === 204) return { response, payload: null };
+  const payload = await response.json().catch(() => ({}));
+  if (!response.ok) {
+    throw Object.assign(
+      new Error(payload.error || 'Não foi possível renovar sua sessão.'),
+      { status: response.status, code: response.status === 401 ? 'session_expired' : 'session_refresh_failed' },
+    );
+  }
+  return { response, payload };
+}
+
+async function refreshBrowserSession() {
+  if (!usesCognito() || !apiBase()) return null;
+  if (!browserRefreshPromise) {
+    browserRefreshPromise = (async () => {
+      const { payload } = await browserSessionCall('session/refresh');
+      if (!payload) return null;
+      const session = portalCognitoSession(payload);
+      if (!session) throw Object.assign(new Error('Sessão renovada inválida.'), { code: 'session_refresh_invalid' });
+      saveSession(session);
+      return session;
+    })().finally(() => { browserRefreshPromise = null; });
+  }
+  return browserRefreshPromise;
+}
 
 function decodeJwt(token) {
   const body = token.split('.')[1].replace(/-/g, '+').replace(/_/g, '/');
@@ -66,6 +107,15 @@ async function cognitoCall(target, payload) {
 export async function signIn(email, password) {
   if (!usesCognito()) return supabase.auth.signInWithPassword({ email, password });
   try {
+    if (apiBase()) {
+      const { payload } = await browserSessionCall('session/login', {
+        body: { email: String(email || '').trim().toLowerCase(), password: String(password || '') },
+      });
+      const session = portalCognitoSession(payload);
+      if (!session) throw Object.assign(new Error('Sessão AWS inválida.'), { code: 'session_invalid' });
+      saveSession(session);
+      return { data: { session }, error: null };
+    }
     const result = await cognitoCall('InitiateAuth', { AuthFlow: 'USER_PASSWORD_AUTH', ClientId: config().cognitoClientId, AuthParameters: { USERNAME: email, PASSWORD: password } });
     const session = cognitoSession(result.AuthenticationResult); saveSession(session);
     return { data: { session }, error: null };
@@ -86,9 +136,14 @@ export async function signOut() {
     if (supabase?.auth) await supabase.auth.signOut().catch(() => {});
     return;
   }
-  const session = (await getSession()).data.session;
-  if (session?.cognito_access_token) await cognitoCall('GlobalSignOut', { AccessToken: session.cognito_access_token }).catch(() => {});
-  saveSession(null);
+  try {
+    if (apiBase()) await browserSessionCall('session', { method: 'DELETE' });
+  } catch {
+    const session = stored;
+    if (session?.cognito_access_token) await cognitoCall('GlobalSignOut', { AccessToken: session.cognito_access_token }).catch(() => {});
+  } finally {
+    saveSession(null);
+  }
 }
 export async function getSession() {
   if (!usesCognito()) return supabase.auth.getSession();
@@ -110,14 +165,30 @@ export async function getSession() {
       return { data: { session: null } };
     }
   }
-  if (!session || session.expires_at <= Math.floor(Date.now() / 1000)) {
-    if (!session?.refresh_token) return { data: { session: null } };
+  const now = Math.floor(Date.now() / 1000);
+  if (session?.expires_at > now + 30) return { data: { session } };
+
+  if (apiBase()) {
+    try {
+      const refreshed = await refreshBrowserSession();
+      if (refreshed) return { data: { session: refreshed } };
+    } catch (error) {
+      if (error?.status !== 401 && session?.expires_at > now) return { data: { session } };
+    }
+  }
+
+  // Compatibilidade temporária com sessões antigas que ainda guardavam o refresh token no navegador.
+  if (session?.refresh_token) {
     try {
       const result = await cognitoCall('InitiateAuth', { AuthFlow: 'REFRESH_TOKEN_AUTH', ClientId: config().cognitoClientId, AuthParameters: { REFRESH_TOKEN: session.refresh_token } });
-      session = cognitoSession({ ...result.AuthenticationResult, RefreshToken: session.refresh_token }); saveSession(session);
-    } catch { saveSession(null); session = null; }
+      session = cognitoSession({ ...result.AuthenticationResult, RefreshToken: session.refresh_token });
+      saveSession(session);
+      return { data: { session } };
+    } catch {}
   }
-  return { data: { session } };
+
+  saveSession(null);
+  return { data: { session: null } };
 }
 export function setSession(tokens) {
   if (!usesCognito()) return supabase.auth.setSession({ access_token: tokens.access_token, refresh_token: tokens.refresh_token });
@@ -151,7 +222,7 @@ export async function completePortalSso(location = window.location) {
     if (!usesCognito() || !config().awsApiBase) throw new Error('Acesso AWS não configurado.');
     const response = await fetch(`${config().awsApiBase.replace(/\/$/, '')}/v1/portal-session/exchange`, {
       method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ code: launchCode }),
-      credentials: 'omit', cache: 'no-store',
+      credentials: 'include', cache: 'no-store',
     });
     const tokens = await response.json().catch(() => ({}));
     if (!response.ok) throw new Error(tokens.error || 'Código de acesso inválido ou expirado.');
@@ -190,4 +261,16 @@ export async function updateOwnPassword(password, code) {
   if (!recoveryEmail) throw new Error('Solicite um novo código de recuperação.');
   await cognitoCall('ConfirmForgotPassword', { ClientId: config().cognitoClientId, Username: recoveryEmail, ConfirmationCode: code, Password: password });
 }
+export async function refreshAccessToken() {
+  if (!usesCognito()) return (await getSession()).data.session?.access_token || null;
+  try {
+    const refreshed = await refreshBrowserSession();
+    if (refreshed?.access_token) return refreshed.access_token;
+  } catch (error) {
+    if (error?.status === 401) saveSession(null);
+    throw error;
+  }
+  return null;
+}
+
 export async function getAccessToken() { return (await getSession()).data.session?.access_token || null; }
