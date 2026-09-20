@@ -169,9 +169,10 @@ export async function provisionPortalAccess(client, tableName, input) {
     { Update: {
       TableName: tableName,
       Key: { PK: genericPk, SK: entitlementSk('obrigacoes') },
-      UpdateExpression: 'SET moduleId=:moduleId, #plan=if_not_exists(#plan,:portalPlan), #status=if_not_exists(#status,:activeStatus), startedAt=if_not_exists(startedAt,:startedAt), updatedAt=:updatedAt, entityType=:entitlementEntity, schemaVersion=:genericSchema',
+      UpdateExpression: 'SET workspace_id=:workspaceId, moduleId=:moduleId, #plan=if_not_exists(#plan,:portalPlan), #status=if_not_exists(#status,:activeStatus), startedAt=if_not_exists(startedAt,:startedAt), updatedAt=:updatedAt, entityType=:entitlementEntity, schemaVersion=:genericSchema',
       ExpressionAttributeNames: { '#plan': 'plan', '#status': 'status' },
       ExpressionAttributeValues: {
+        ':workspaceId': data.workspaceId,
         ':moduleId': 'obrigacoes',
         ':portalPlan': 'portal',
         ':activeStatus': 'ativo',

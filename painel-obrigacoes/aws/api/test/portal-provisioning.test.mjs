@@ -143,7 +143,9 @@ test('provisiona vínculo genérico sem exigir documento cadastral', async () =>
     PK: 'WORKSPACE#workspace-1',
     SK: 'ENTITLEMENT#obrigacoes',
   });
+  assert.equal(entitlement.ExpressionAttributeValues[':workspaceId'], 'workspace-1');
   assert.equal(entitlement.ExpressionAttributeValues[':activeStatus'], 'ativo');
+  assert.match(entitlement.UpdateExpression, /workspace_id=:workspaceId/);
   assert.equal(entitlement.ExpressionAttributeValues[':genericSchema'], 2);
   assert.match(entitlement.UpdateExpression, /if_not_exists\(#status,:activeStatus\)/);
   assert.equal(command.input.TransactItems[4].Put.Item.action, 'PORTAL_ACCESS_PROVISIONED');
