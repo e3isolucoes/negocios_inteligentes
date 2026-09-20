@@ -64,3 +64,5 @@ npm test
 ## Próximas evoluções
 
 A estrutura foi preparada para novos módulos entrarem pelo registro central sem acoplar a navegação global às regras internas de cada produto.
+
+<!-- operational-redeploy: cors-session-completion-20260919 -->
