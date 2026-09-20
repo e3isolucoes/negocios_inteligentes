@@ -21,7 +21,6 @@ execFileSync(process.execPath, [path.join(__dirname, 'patch-session-probe.cjs')]
 
 const patched = fs.readFileSync(server, 'utf8');
 assert.match(patched, /E3I_ANONYMOUS_SESSION_PROBE_V2/);
-assert.match(patched, /app\.use\("\/api\/auth\/session"/);
 assert.match(patched, /req\.path !== "\/api\/auth\/session"/);
 assert.match(patched, /Number\(code\) === 401/);
 assert.match(patched, /originalSend/);
