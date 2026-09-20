@@ -21,6 +21,8 @@ test('conclusão mostra requisitos visuais claros antes de salvar', async () => 
 
   assert.match(dialog, /checklistUnavailable/);
   assert.match(dialog, /validatorReady/);
+  assert.match(dialog, /checklistSyncError/);
+  assert.match(dialog, /checkbox\.checked = !requested/);
   assert.match(dialog, /confirmBtn\.disabled = !ready/);
   assert.match(css, /\.completion-requirement\.is-ready/);
   assert.match(css, /\.completion-blockers\.is-ready/);
