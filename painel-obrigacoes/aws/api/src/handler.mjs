@@ -167,16 +167,31 @@ export async function handler(event) {
     if (method === 'POST' && path === 'session/refresh') {
       const refreshToken = readRefreshCookie(event.headers);
       if (!refreshToken) return response(204, {}, event);
-      const rotated = await rotateBrowserSession(
-        cognito,
-        ddb,
-        process.env.TABLE_NAME,
-        {
-          userPoolId: process.env.USER_POOL_ID,
-          clientId: process.env.USER_POOL_CLIENT_ID,
-        },
-        refreshToken,
-      );
+
+      let rotated;
+      try {
+        rotated = await rotateBrowserSession(
+          cognito,
+          ddb,
+          process.env.TABLE_NAME,
+          {
+            userPoolId: process.env.USER_POOL_ID,
+            clientId: process.env.USER_POOL_CLIENT_ID,
+          },
+          refreshToken,
+        );
+      } catch (error) {
+        // A verificação inicial de sessão é um probe de estado, não uma rota
+        // protegida. Cookie ausente, expirado, revogado ou já rotacionado
+        // significa apenas "sem sessão ativa" para o navegador. Limpar o cookie
+        // evita repetir 401 a cada carregamento, preservando 401 nas APIs que
+        // realmente exigem autenticação.
+        if (error?.statusCode === 401) {
+          return response(204, {}, event, { 'set-cookie': refreshCookie('', 0) });
+        }
+        throw error;
+      }
+
       return response(
         200,
         {
