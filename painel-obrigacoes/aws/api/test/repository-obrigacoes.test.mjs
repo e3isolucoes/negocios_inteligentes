@@ -155,6 +155,7 @@ test('occurrence mantém unicidade por atividade e data e cria evidence metadata
       obligation_id: activity.id,
       occurrence_date: '2026-09-30',
       done_by: 'user-a',
+      attachment_path: 'painel-obrigacoes/staging/empresa-a/obligations/x/file.pdf',
     }),
     (error) => error.statusCode === 409,
   );
