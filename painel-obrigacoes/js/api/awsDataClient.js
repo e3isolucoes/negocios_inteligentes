@@ -1,4 +1,4 @@
-import { getAccessToken } from './auth.js';
+import { getAccessToken, refreshAccessToken } from './auth.js';
 import { STATE } from '../state.js';
 
 const sleep = (milliseconds) => new Promise((resolve) => setTimeout(resolve, milliseconds));
@@ -21,22 +21,40 @@ export function awsApiBase() {
 async function request(path, { method = 'GET', body } = {}) {
   const API_BASE = awsApiBase();
   if (!API_BASE) throw new Error('Backend AWS ainda não foi configurado.');
-  const accessToken = await getAccessToken();
-  if (!accessToken) throw new Error('Sua sessão expirou. Entre novamente.');
+  let accessToken = await getAccessToken();
+  if (!accessToken) {
+    throw Object.assign(new Error('Sua sessão expirou. Entre novamente.'), { status: 401, code: 'session_expired' });
+  }
   let response;
-  for (let attempt = 0; attempt < 3; attempt += 1) {
+  let authRetried = false;
+  for (let attempt = 0; attempt < 4; attempt += 1) {
     await waitForApiSlot();
-    response = await fetch(`${API_BASE}/v1/${path}`, {
-      method,
-      headers: {
-        authorization: `Bearer ${accessToken}`,
-        'content-type': 'application/json',
-        ...(STATE.profile?.workspace_id ? { 'x-workspace-id': STATE.profile.workspace_id } : {})
-      },
-      body: body === undefined ? undefined : JSON.stringify(body),
-      credentials: 'omit',
-      cache: 'no-store'
-    });
+    try {
+      response = await fetch(`${API_BASE}/v1/${path}`, {
+        method,
+        headers: {
+          authorization: `Bearer ${accessToken}`,
+          'content-type': 'application/json',
+          ...(STATE.profile?.workspace_id ? { 'x-workspace-id': STATE.profile.workspace_id } : {})
+        },
+        body: body === undefined ? undefined : JSON.stringify(body),
+        credentials: 'omit',
+        cache: 'no-store'
+      });
+    } catch (cause) {
+      throw Object.assign(
+        new Error('Não foi possível conectar ao serviço da ferramenta. Tente novamente; se persistir, use Atualizar para restabelecer a conexão.'),
+        { status: 0, code: 'service_unreachable', cause },
+      );
+    }
+    if (response.status === 401 && !authRetried) {
+      authRetried = true;
+      accessToken = await refreshAccessToken();
+      if (!accessToken) {
+        throw Object.assign(new Error('Sua sessão expirou. Entre novamente.'), { status: 401, code: 'session_expired' });
+      }
+      continue;
+    }
     if (response.status !== 429) break;
     await sleep(500 * (attempt + 1));
   }
