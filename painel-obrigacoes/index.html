@@ -20,7 +20,7 @@
   Nunca substitua js/config.js pela configuração de outro projeto no deploy.
   ============================================================================
 -->
-<link rel="stylesheet" href="css/styles.css?v=20260919-consolidated-v1" />
+<link rel="stylesheet" href="css/styles.css?v=20260919-operational-v2" />
 <link rel="stylesheet" href="css/validacao.css" />
 <link rel="manifest" href="manifest.json" />
 <link rel="icon" href="icons/e3l-solucoes.svg" type="image/svg+xml" />
@@ -71,10 +71,12 @@
     <img class="reset-brand-logo" src="icons/e3l-solucoes.svg" alt="E3I Soluções" />
     <h1>Definir nova senha</h1>
     <p>Escolha uma nova senha para a sua conta.</p>
-    <div class="field"><label for="resetCodeInput">Código recebido por e-mail</label><input id="resetCodeInput" inputmode="numeric" autocomplete="one-time-code" /></div>
-    <div class="field"><label for="newPasswordInput">Nova senha</label><input id="newPasswordInput" type="password" autocomplete="new-password" placeholder="Mín. 8 caracteres, com maiúscula e número" /></div>
-    <p id="resetPasswordError" class="login-error hidden"></p>
-    <button class="btn-primary" id="resetPasswordBtn">Salvar nova senha</button>
+    <form id="resetPasswordForm" novalidate>
+      <div class="field"><label for="resetCodeInput">Código recebido por e-mail</label><input id="resetCodeInput" inputmode="numeric" autocomplete="one-time-code" /></div>
+      <div class="field"><label for="newPasswordInput">Nova senha</label><input id="newPasswordInput" type="password" autocomplete="new-password" placeholder="Mín. 8 caracteres, com maiúscula e número" /></div>
+      <p id="resetPasswordError" class="login-error hidden"></p>
+      <button class="btn-primary" id="resetPasswordBtn" type="button">Salvar nova senha</button>
+    </form>
   </div>
 </div>
 <div class="shell hidden" id="app"></div>
