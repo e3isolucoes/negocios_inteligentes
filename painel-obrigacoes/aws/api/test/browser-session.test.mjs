@@ -2,9 +2,13 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import { issueBrowserSession, readRefreshCookie, refreshCookie, revokeBrowserSession, rotateBrowserSession } from '../src/browser-session.mjs';
 
-test('cookie de refresh aplica atributos seguros e não expõe o token no corpo', () => {
+test('cookie de refresh aplica atributos seguros, pode ser limpo e não expõe o token no corpo', () => {
   assert.equal(readRefreshCookie({ cookie: 'other=x; __Host-e3i_refresh=opaque' }), 'opaque');
   assert.match(refreshCookie('opaque'), /^__Host-e3i_refresh=opaque; Path=\/; Max-Age=\d+; HttpOnly; Secure; SameSite=None$/);
+  assert.equal(
+    refreshCookie('', 0),
+    '__Host-e3i_refresh=; Path=/; Max-Age=0; HttpOnly; Secure; SameSite=None',
+  );
 });
 
 test('rotaciona uma vez e revoga a família quando o token anterior é reutilizado', async () => {
