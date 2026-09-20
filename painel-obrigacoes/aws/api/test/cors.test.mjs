@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
-import { allowedOrigin, response } from '../src/handler.mjs';
+import { allowedOrigin, handler, response } from '../src/handler.mjs';
 
 test('CORS devolve a origem oficial em preflight e respostas da API', () => {
   process.env.ALLOWED_ORIGINS = 'https://obrigacoes.e3isolucoes.com.br,https://preview.example.test';
@@ -11,6 +11,29 @@ test('CORS devolve a origem oficial em preflight e respostas da API', () => {
 
   const result = response(401, { error: 'Autenticação obrigatória.' }, event);
   assert.equal(result.headers['access-control-allow-origin'], 'https://obrigacoes.e3isolucoes.com.br');
+  assert.equal(result.headers['access-control-allow-credentials'], 'true');
+  assert.match(result.headers['access-control-allow-headers'], /authorization/);
+  assert.match(result.headers['access-control-allow-headers'], /x-workspace-id/);
+  assert.match(result.headers['access-control-allow-methods'], /OPTIONS/);
+});
+
+test('handler OPTIONS responde preflight operacional sem autenticação', async () => {
+  const origin = 'https://obrigacoes.e3isolucoes.com.br';
+  const result = await handler({
+    headers: {
+      origin,
+      'access-control-request-method': 'GET',
+      'access-control-request-headers': 'authorization,content-type,x-workspace-id',
+    },
+    requestContext: {
+      requestId: 'cors-preflight-test',
+      http: { method: 'OPTIONS' },
+    },
+    rawPath: '/v1/obligations',
+  });
+
+  assert.equal(result.statusCode, 204);
+  assert.equal(result.headers['access-control-allow-origin'], origin);
   assert.equal(result.headers['access-control-allow-credentials'], 'true');
   assert.match(result.headers['access-control-allow-headers'], /authorization/);
   assert.match(result.headers['access-control-allow-headers'], /x-workspace-id/);
