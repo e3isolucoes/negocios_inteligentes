@@ -1,4 +1,5 @@
 name: Deploy AWS staging
+# release-trigger: canonical-consolidation-20260920
 
 on:
   push:
