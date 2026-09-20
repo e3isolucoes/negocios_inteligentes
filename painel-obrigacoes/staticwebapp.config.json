@@ -1,0 +1,41 @@
+{
+  "navigationFallback": {
+    "rewrite": "/index.html",
+    "exclude": [
+      "/api/*",
+      "/css/*",
+      "/data/*",
+      "/icons/*",
+      "/js/*",
+      "/manifest.json",
+      "/sw.js",
+      "/*.{css,ico,jpg,jpeg,js,json,png,svg,webp,woff,woff2}"
+    ]
+  },
+  "globalHeaders": {
+    "Content-Security-Policy": "default-src 'self'; script-src 'self' 'wasm-unsafe-eval' https://cdn.jsdelivr.net; worker-src 'self' https://cdn.jsdelivr.net blob:; connect-src 'self' https://fsyginnpvonruifetjjs.supabase.co https://*.supabase.co https://oezgdex1li.execute-api.sa-east-1.amazonaws.com https://cognito-idp.sa-east-1.amazonaws.com https://*.s3.sa-east-1.amazonaws.com https://cdn.jsdelivr.net; img-src 'self' data: blob:; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' data: https://fonts.gstatic.com; object-src 'none'; base-uri 'self'; form-action 'self'; frame-ancestors 'self' https://portal.e3isolucoes.com.br;",
+    "Referrer-Policy": "strict-origin-when-cross-origin",
+    "X-Content-Type-Options": "nosniff",
+    "Permissions-Policy": "camera=(), geolocation=(), microphone=()"
+  },
+  "routes": [
+    {
+      "route": "/sw.js",
+      "headers": {
+        "Cache-Control": "no-cache, no-store, must-revalidate"
+      }
+    },
+    {
+      "route": "/api/*",
+      "headers": {
+        "Cache-Control": "no-store"
+      }
+    },
+    {
+      "route": "/*.{css,js,html,json}",
+      "headers": {
+        "Cache-Control": "no-cache, no-store, must-revalidate"
+      }
+    }
+  ]
+}
