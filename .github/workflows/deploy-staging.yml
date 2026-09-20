@@ -586,6 +586,8 @@ jobs:
         working-directory: .
 
       - name: Create guarded final staging change set
+        id: full_stack_deploy
+        continue-on-error: true
         env:
           AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
           AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
@@ -711,7 +713,117 @@ jobs:
             --stack-name "$STACK_NAME"
         working-directory: painel-obrigacoes/aws
 
+      - name: Diagnose full stack rollback
+        if: steps.full_stack_deploy.outcome == 'failure'
+        env:
+          AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          AWS_SESSION_TOKEN: ${{ secrets.AWS_SESSION_TOKEN }}
+        run: |
+          set -euo pipefail
+          echo "::warning::O deploy completo do stack falhou e sofreu rollback. A correção operacional da API será aplicada de forma isolada."
+          aws cloudformation describe-stack-events \
+            --region "$AWS_REGION" \
+            --stack-name "$STACK_NAME" \
+            --max-items 80 \
+            --query "StackEvents[?ResourceStatus=='UPDATE_FAILED' || ResourceStatus=='CREATE_FAILED' || ResourceStatus=='UPDATE_ROLLBACK_FAILED'].[Timestamp,LogicalResourceId,ResourceType,ResourceStatusReason]" \
+            --output table || true
+
+          {
+            echo "### Staging: fallback operacional"
+            echo ""
+            echo "O update completo do CloudFormation sofreu rollback."
+            echo "A pipeline seguirá com atualização isolada da Lambda/API e CORS, sem tocar Cognito, DynamoDB, S3 ou schedules."
+          } >> "$GITHUB_STEP_SUMMARY"
+        working-directory: .
+
+      - name: Apply isolated API and CORS hotfix
+        if: steps.full_stack_deploy.outcome == 'failure'
+        env:
+          AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          AWS_SESSION_TOKEN: ${{ secrets.AWS_SESSION_TOKEN }}
+        run: |
+          set -euo pipefail
+
+          FUNCTION_NAME="e3i-staging-painel-obrigacoes-api"
+          OFFICIAL_ORIGIN="https://obrigacoes.e3isolucoes.com.br"
+          PREVIEW_ORIGIN="$(aws cloudformation describe-stacks \
+            --region "$AWS_REGION" \
+            --stack-name "$STACK_NAME" \
+            --query "Stacks[0].Parameters[?ParameterKey=='PreviewOrigin'].ParameterValue | [0]" \
+            --output text)"
+          if [ -z "$PREVIEW_ORIGIN" ] || [ "$PREVIEW_ORIGIN" = "None" ]; then
+            PREVIEW_ORIGIN="https://black-mud-078f1a310-103.centralus.7.azurestaticapps.net"
+          fi
+
+          test -s painel-obrigacoes/aws/api/dist/handler.js || {
+            echo "Bundle handler.js não encontrado."
+            exit 1
+          }
+
+          rm -f /tmp/e3i-api-hotfix.zip
+          (
+            cd painel-obrigacoes/aws/api/dist
+            zip -q /tmp/e3i-api-hotfix.zip handler.js
+          )
+
+          aws lambda update-function-code \
+            --region "$AWS_REGION" \
+            --function-name "$FUNCTION_NAME" \
+            --zip-file fileb:///tmp/e3i-api-hotfix.zip \
+            >/tmp/api-hotfix-update.json
+
+          aws lambda wait function-updated \
+            --region "$AWS_REGION" \
+            --function-name "$FUNCTION_NAME"
+
+          python - "$EXPECTED_API_ID" "$OFFICIAL_ORIGIN" "$PREVIEW_ORIGIN" <<'PY' >/tmp/api-cors.json
+          import json, sys
+          api_id, official, preview = sys.argv[1:]
+          print(json.dumps({
+              "ApiId": api_id,
+              "CorsConfiguration": {
+                  "AllowCredentials": True,
+                  "AllowHeaders": ["authorization", "content-type", "x-workspace-id"],
+                  "AllowMethods": ["GET", "POST", "PATCH", "DELETE", "OPTIONS"],
+                  "AllowOrigins": [official, preview],
+                  "MaxAge": 600,
+              },
+          }))
+          PY
+
+          aws apigatewayv2 update-api \
+            --region "$AWS_REGION" \
+            --cli-input-json file:///tmp/api-cors.json \
+            >/tmp/api-cors-update.json
+
+          for attempt in $(seq 1 30); do
+            CURRENT="$(aws lambda get-function-configuration \
+              --region "$AWS_REGION" \
+              --function-name "$FUNCTION_NAME" \
+              --query 'LastUpdateStatus' \
+              --output text)"
+            if [ "$CURRENT" = "Successful" ]; then
+              echo "Lambda API atualizada com sucesso."
+              break
+            fi
+            if [ "$CURRENT" = "Failed" ]; then
+              echo "Atualização isolada da Lambda falhou."
+              aws lambda get-function-configuration \
+                --region "$AWS_REGION" \
+                --function-name "$FUNCTION_NAME" \
+                --output json
+              exit 1
+            fi
+            sleep 2
+          done
+
+          echo "::warning::Hotfix operacional aplicado fora do change set completo. O drift de infraestrutura continua registrado para reconciliação separada."
+        working-directory: .
+
       - name: Verify stack update
+        if: steps.full_stack_deploy.outcome == 'success'
         env:
           AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
           AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
