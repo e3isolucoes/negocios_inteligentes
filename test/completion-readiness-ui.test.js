@@ -47,3 +47,22 @@ test('frontend mantém conclusão disponível para todos os papéis operacionais
   assert.match(state, /export function canWriteObligations\(\)[\s\S]*?'membro'[\s\S]*?'member'/);
   assert.match(state, /'gestor'[\s\S]*?'manager'[\s\S]*?'admin'[\s\S]*?'super_admin'|\['super_admin', 'admin', 'gestor', 'manager', 'membro', 'member'\]/);
 });
+
+
+test('Admin consegue auditar visualmente o acesso de conclusão de cada usuário', async () => {
+  const [team, auth] = await Promise.all([
+    readFile(new URL('../painel-obrigacoes/js/ui/manageTeam.js', import.meta.url), 'utf8'),
+    readFile(new URL('../painel-obrigacoes/aws/api/src/auth.mjs', import.meta.url), 'utf8'),
+  ]);
+
+  assert.match(team, /team-completion-access/);
+  assert.match(team, /Conclusão de atividades:/);
+  assert.match(team, /acesso revogado/);
+  assert.match(team, /sem empresa vinculada/);
+  assert.match(team, /pode concluir atividades/);
+
+  // Obrigações são capacidade operacional básica do vínculo ativo; poderes
+  // administrativos continuam deny-by-default.
+  assert.match(auth, /if \(!grant \|\| grant === 'obrigacoes'\) return;/);
+  assert.match(auth, /Capacidades administrativas são sempre deny-by-default/);
+});
