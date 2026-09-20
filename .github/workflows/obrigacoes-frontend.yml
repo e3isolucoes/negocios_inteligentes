@@ -1,0 +1,143 @@
+name: Canonical Obligacoes Frontend
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - 'painel-obrigacoes/**'
+      - 'api/**'
+      - '.github/workflows/obrigacoes-frontend.yml'
+  push:
+    branches: [main]
+    paths:
+      - 'painel-obrigacoes/**'
+      - 'api/**'
+      - '.github/workflows/obrigacoes-frontend.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: obrigacoes-frontend-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Validate canonical repository contract
+        run: |
+          set -euo pipefail
+          grep -Fq 'name="e3i-build-source" content="e3isolucoes/negocios_inteligentes"' painel-obrigacoes/index.html
+          grep -Fq '20260920-canonical-v1' painel-obrigacoes/index.html
+          test -s painel-obrigacoes/staticwebapp.config.json
+          test -s painel-obrigacoes/js/api/awsDataClient.js
+
+      - name: Run platform tests
+        run: npm test
+
+      - name: Check browser JavaScript syntax
+        run: |
+          set -euo pipefail
+          while IFS= read -r -d '' file; do
+            node --check "$file"
+          done < <(find painel-obrigacoes/js platform modules -type f -name '*.js' -print0)
+
+      - name: Verify operational session recovery
+        run: |
+          set -euo pipefail
+          grep -Fq "refreshAccessToken" painel-obrigacoes/js/api/awsDataClient.js
+          grep -Fq "session_expired" painel-obrigacoes/js/api/awsDataClient.js
+          grep -Fq "service_unreachable" painel-obrigacoes/js/api/awsDataClient.js
+
+      - name: Verify completion readiness guidance
+        run: |
+          set -euo pipefail
+          grep -Fq "completionReadinessPreview" painel-obrigacoes/js/ui/board.js
+          grep -Fq "Checklist" painel-obrigacoes/js/ui/board.js
+          grep -Fq "Comprovante" painel-obrigacoes/js/ui/board.js
+          grep -Fq "Validação" painel-obrigacoes/js/ui/board.js
+
+  deploy:
+    needs: validate
+    if: github.event_name == 'push' || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    environment: production
+    env:
+      AZURE_DEPLOY_TOKEN: ${{ secrets.AZURE_STATIC_WEB_APPS_API_TOKEN }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Require Azure production token
+        run: |
+          test -n "$AZURE_DEPLOY_TOKEN" || {
+            echo "::error::AZURE_STATIC_WEB_APPS_API_TOKEN não está configurado em negocios_inteligentes/production."
+            exit 1
+          }
+
+      - name: Deploy canonical Obligacoes frontend
+        uses: Azure/static-web-apps-deploy@v1
+        with:
+          azure_static_web_apps_api_token: ${{ env.AZURE_DEPLOY_TOKEN }}
+          repo_token: ${{ secrets.GITHUB_TOKEN }}
+          action: upload
+          app_location: /painel-obrigacoes
+          api_location: api
+          output_location: ''
+          skip_app_build: true
+
+      - name: Verify production serves canonical repository
+        run: |
+          set -euo pipefail
+          URL="https://obrigacoes.e3isolucoes.com.br/"
+          for attempt in $(seq 1 30); do
+            if curl -fsSL -H 'Cache-Control: no-cache' "$URL" -o /tmp/obrigacoes.html; then
+              if grep -Fq 'e3isolucoes/negocios_inteligentes' /tmp/obrigacoes.html                  && grep -Fq '20260920-canonical-v1' /tmp/obrigacoes.html; then
+                echo "Frontend canônico confirmado em produção."
+                break
+              fi
+            fi
+            if [ "$attempt" = "30" ]; then
+              echo "::error::O domínio ainda não está servindo o frontend canônico."
+              sed -n '1,120p' /tmp/obrigacoes.html 2>/dev/null || true
+              exit 1
+            fi
+            sleep 10
+          done
+
+      - name: Verify operational API CORS from official origin
+        run: |
+          set -euo pipefail
+          API="https://oezgdex1li.execute-api.sa-east-1.amazonaws.com"
+          ORIGIN="https://obrigacoes.e3isolucoes.com.br"
+
+          curl -sS -D /tmp/preflight.headers -o /tmp/preflight.body             -X OPTIONS "$API/v1/obligations?limit=1"             -H "Origin: $ORIGIN"             -H "Access-Control-Request-Method: GET"             -H "Access-Control-Request-Headers: authorization,content-type,x-workspace-id"
+          tr -d '\r' </tmp/preflight.headers >/tmp/preflight.clean
+
+          grep -Fqi "access-control-allow-origin: $ORIGIN" /tmp/preflight.clean || {
+            echo "::error::CORS preflight não libera a origem oficial."
+            cat /tmp/preflight.clean
+            exit 1
+          }
+
+          STATUS="$(curl -sS -D /tmp/unauth.headers -o /tmp/unauth.body -w '%{http_code}'             "$API/v1/obligations?limit=1"             -H "Origin: $ORIGIN")"
+          test "$STATUS" = "401" || {
+            echo "::error::Esperado 401 sem token; recebido $STATUS"
+            cat /tmp/unauth.body
+            exit 1
+          }
+          tr -d '\r' </tmp/unauth.headers >/tmp/unauth.clean
+          grep -Fqi "access-control-allow-origin: $ORIGIN" /tmp/unauth.clean || {
+            echo "::error::Resposta 401 não preserva CORS."
+            cat /tmp/unauth.clean
+            exit 1
+          }
+
+          echo "CORS operacional confirmado para o domínio oficial."
