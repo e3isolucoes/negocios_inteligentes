@@ -22,10 +22,28 @@ test('conclusão mostra requisitos visuais claros antes de salvar', async () => 
   assert.match(dialog, /checklistUnavailable/);
   assert.match(dialog, /validatorReady/);
   assert.match(dialog, /checklistSyncError/);
+  assert.match(dialog, /pendingChecklistSaves/);
+  assert.match(dialog, /Aguarde: estamos salvando o checklist/);
   assert.match(dialog, /checkbox\.checked = !requested/);
   assert.match(dialog, /confirmBtn\.disabled = !ready/);
   assert.match(css, /\.completion-requirement\.is-ready/);
   assert.match(css, /\.completion-blockers\.is-ready/);
+});
+
+test('cartão mostra visualmente o que falta antes de abrir a conclusão', async () => {
+  const [board, css] = await Promise.all([
+    readFile(new URL('../painel-obrigacoes/js/ui/board.js', import.meta.url), 'utf8'),
+    readFile(new URL('../painel-obrigacoes/css/styles.css', import.meta.url), 'utf8'),
+  ]);
+
+  assert.match(board, /completionReadinessPreview/);
+  assert.match(board, /Checklist/);
+  assert.match(board, /Comprovante no envio/);
+  assert.match(board, /Definir outro validador/);
+  assert.match(board, /Faltam \$\{hardBlockers\} etapa/);
+  assert.match(css, /\.completion-card-readiness\{/);
+  assert.match(css, /\.completion-card-step\.is-blocked/);
+  assert.match(css, /\.completion-card-step\.is-ready/);
 });
 
 test('fluxo não ignora falha de checklist e preserva erro específico do backend', async () => {
@@ -76,4 +94,6 @@ test('checklist AWS normaliza done para completed usado pela interface', async (
   assert.match(checklist, /item\.completed \?\? item\.done/);
   assert.match(checklist, /\.map\(normalizeChecklistItem\)/);
   assert.match(checklist, /normalizeChecklistItem\(await awsData\.update/);
+  assert.match(checklist, /resetChecklistItems[\s\S]*?normalizeChecklistItem/);
+  assert.match(checklist, /createChecklistItemsBulk[\s\S]*?normalizeChecklistItem/);
 });

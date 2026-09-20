@@ -55,7 +55,9 @@ export async function toggleChecklistItem(itemId, done) {
 export async function resetChecklistItems(obligationId) {
   if (isAwsDataBackend()) {
     const items = (await awsData.list('checklist_items')).filter((item) => item.obligation_id === obligationId && item.done);
-    return Promise.all(items.map((item) => awsData.update('checklist_items', item.id, { done: false, completed_at: null })));
+    return Promise.all(items.map(async (item) => normalizeChecklistItem(
+      await awsData.update('checklist_items', item.id, { done: false, completed_at: null })
+    )));
   }
   const { data, error } = await supabase.rpc('reset_checklist_items', { p_obligation_id: obligationId });
   if (error) throw error;
@@ -76,9 +78,9 @@ export async function createChecklistItem({ obligationId, description, position 
 export async function createChecklistItemsBulk(items) {
   if (!items.length) return [];
   if (isAwsDataBackend()) {
-    return Promise.all(items.map(({ obligationId, description, position }) => awsData.create('checklist_items', {
-      obligation_id: obligationId, description, position,
-    })));
+    return Promise.all(items.map(async ({ obligationId, description, position }) => normalizeChecklistItem(
+      await awsData.create('checklist_items', { obligation_id: obligationId, description, position })
+    )));
   }
   const payload = items.map(({ obligationId, description, position }) => ({
     obligation_id: obligationId,
