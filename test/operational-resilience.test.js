@@ -71,3 +71,20 @@ test('assets operacionais usam uma única versão e recuperação de senha está
   assert.doesNotMatch(app, /20260919-consolidated-v1/);
   assert.doesNotMatch(render, /20260919-consolidated-v1/);
 });
+
+
+test('PDF.js respeita CSP sem unsafe-eval e é carregado apenas sob demanda', async () => {
+  const [index, ocr, swa] = await Promise.all([
+    readFile(new URL('../painel-obrigacoes/index.html', import.meta.url), 'utf8'),
+    readFile(new URL('../painel-obrigacoes/js/ocr.js', import.meta.url), 'utf8'),
+    readFile(new URL('../painel-obrigacoes/staticwebapp.config.json', import.meta.url), 'utf8'),
+  ]);
+
+  assert.doesNotMatch(index, /pdfjs-dist@3\.11\.174/);
+  assert.doesNotMatch(index, /pdf\.min\.js/);
+  assert.match(ocr, /PDFJS_VERSION = '6\.3\.289'/);
+  assert.match(ocr, /import\(PDFJS_MODULE_URL\)/);
+  assert.match(ocr, /pdf\.worker\.mjs/);
+  assert.doesNotMatch(swa, /'unsafe-eval'/);
+  assert.match(swa, /'wasm-unsafe-eval'/);
+});

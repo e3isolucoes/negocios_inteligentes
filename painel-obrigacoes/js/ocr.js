@@ -1,6 +1,6 @@
 // Leitura de comprovantes por OCR direto no navegador (Tesseract.js) e por
-// extração de texto de PDF (pdf.js) — ambos via CDN em index.html, sem
-// serviço externo pago nem backend próprio — para conferir se o arquivo
+// extração de texto de PDF (PDF.js) — carregado sob demanda via módulo ESM,
+// sem serviço externo pago nem backend próprio — para conferir se o arquivo
 // anexado parece ser da competência (mês/ano) da ocorrência sendo
 // concluída.
 //
@@ -8,9 +8,22 @@
 // fixadas no jsDelivr.
 
 const JSDELIVR_BASE = 'https://cdn.jsdelivr.net';
+const PDFJS_VERSION = '6.3.289';
+const PDFJS_MODULE_URL = `${JSDELIVR_BASE}/npm/pdfjs-dist@${PDFJS_VERSION}/build/pdf.mjs`;
+const PDFJS_WORKER_URL = `${JSDELIVR_BASE}/npm/pdfjs-dist@${PDFJS_VERSION}/build/pdf.worker.mjs`;
+let _pdfJsPromise = null;
 
-if (typeof window !== 'undefined' && window.pdfjsLib) {
-  window.pdfjsLib.GlobalWorkerOptions.workerSrc = `${JSDELIVR_BASE}/npm/pdfjs-dist@3.11.174/build/pdf.worker.min.js`;
+async function getPdfJs() {
+  if (!_pdfJsPromise) {
+    _pdfJsPromise = import(PDFJS_MODULE_URL).then((pdfjsLib) => {
+      pdfjsLib.GlobalWorkerOptions.workerSrc = PDFJS_WORKER_URL;
+      return pdfjsLib;
+    }).catch((error) => {
+      _pdfJsPromise = null;
+      throw error;
+    });
+  }
+  return _pdfJsPromise;
 }
 
 const PDF_MIN_TEXT_LENGTH = 25;
@@ -69,14 +82,15 @@ function periodsMatch(occMonth, occYear, extracted) {
 
 // --- PDF text extraction --------------------------------------------------
 async function extractPdfText(file) {
-  const buffer = await file.arrayBuffer();
-  // O pdf.js tenta, por padrão, testar otimizações com `new Function()`. Além
-  // de não ser necessário para a leitura dos comprovantes, isso é bloqueado
-  // pela nossa CSP. Desabilitar explicitamente o recurso mantém a política
-  // segura sem recorrer a `unsafe-eval`.
-  const pdf = await window.pdfjsLib.getDocument({
+  const [buffer, pdfjsLib] = await Promise.all([
+    file.arrayBuffer(),
+    getPdfJs(),
+  ]);
+  // PDF.js 6 remove o caminho legado de detecção/otimização baseado em
+  // new Function() presente na linha 3.x. Mantemos a CSP sem 'unsafe-eval'
+  // e só carregamos o parser quando um PDF realmente precisa ser analisado.
+  const pdf = await pdfjsLib.getDocument({
     data: buffer,
-    isEvalSupported: false,
   }).promise;
   const pagesToRead = Math.min(pdf.numPages, 2);
   let text = '';
@@ -153,7 +167,6 @@ async function tesseractRecognize(target) {
 // --- text extraction (PDF or image) --------------------------------------
 async function extractText(file) {
   if (file.type === 'application/pdf') {
-    if (!window.pdfjsLib) throw new Error('pdf.js não carregou');
     const { pdf, text: pdfText } = await extractPdfText(file);
     if (pdfText.replace(/\s+/g, '').length >= PDF_MIN_TEXT_LENGTH) {
       return pdfText; // PDF nativo, já tem camada de texto — não precisa de OCR
