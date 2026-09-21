@@ -28,3 +28,22 @@ Teste local:
 ```bash
 node portal-admin/test-session-probe.cjs
 ```
+
+
+## Deploy Azure via OIDC
+
+O workflow `.github/workflows/portal-containerapp-deploy.yml` usa OpenID Connect (OIDC) e não depende de `AZURE_CREDENTIALS` nem de client secret permanente.
+
+Cadastre no environment GitHub `portal-test` as variáveis:
+
+- `AZURE_CLIENT_ID`
+- `AZURE_TENANT_ID`
+- `AZURE_SUBSCRIPTION_ID`
+
+No Microsoft Entra ID, a App Registration/Managed Identity usada pelo GitHub deve possuir uma credencial federada com:
+
+- Issuer: `https://token.actions.githubusercontent.com`
+- Audience: `api://AzureADTokenExchange`
+- Subject: `repo:e3isolucoes/negocios_inteligentes:environment:portal-test`
+
+A identidade precisa ter permissão para executar build no ACR `acre3i431811` e atualizar o Container App `e3i-portal-test` no resource group `rg-e3i-portal-test`.
