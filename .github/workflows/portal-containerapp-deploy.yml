@@ -1,0 +1,104 @@
+name: Portal Container App Deploy
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'portal-admin/**'
+      - '.github/workflows/portal-containerapp-deploy.yml'
+  workflow_dispatch:
+
+concurrency:
+  group: portal-containerapp-test
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+env:
+  AZURE_REGISTRY_NAME: acre3i431811
+  AZURE_REGISTRY_SERVER: acre3i431811.azurecr.io
+  PORTAL_IMAGE_REPOSITORY: e3i-portal
+  PORTAL_CONTAINER_APP: e3i-portal-test
+  PORTAL_RESOURCE_GROUP: rg-e3i-portal-test
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: '22'
+      - name: Validate portal auth patch
+        run: |
+          node --check portal-admin/patch-session-probe.cjs
+          node --check portal-admin/test-session-probe.cjs
+          node portal-admin/test-session-probe.cjs
+
+  deploy:
+    needs: validate
+    runs-on: ubuntu-latest
+    environment: portal-test
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Require Azure deployment credentials
+        env:
+          AZURE_CREDENTIALS: ${{ secrets.AZURE_CREDENTIALS }}
+        run: test -n "$AZURE_CREDENTIALS"
+
+      - name: Authenticate to Azure
+        uses: azure/login@v2
+        with:
+          creds: ${{ secrets.AZURE_CREDENTIALS }}
+
+      - name: Build patched Portal image in ACR
+        id: image
+        shell: bash
+        run: |
+          set -euo pipefail
+          TAG="ni-${GITHUB_SHA::12}"
+          IMAGE="$AZURE_REGISTRY_SERVER/$PORTAL_IMAGE_REPOSITORY:$TAG"
+          az acr build \
+            --registry "$AZURE_REGISTRY_NAME" \
+            --image "$PORTAL_IMAGE_REPOSITORY:$TAG" \
+            --file portal-admin/Dockerfile \
+            portal-admin
+          echo "image=$IMAGE" >> "$GITHUB_OUTPUT"
+
+      - name: Deploy image to Azure Container App
+        run: |
+          set -euo pipefail
+          az containerapp update \
+            --name "$PORTAL_CONTAINER_APP" \
+            --resource-group "$PORTAL_RESOURCE_GROUP" \
+            --image "${{ steps.image.outputs.image }}"
+
+      - name: Verify deployed revision
+        shell: bash
+        run: |
+          set -euo pipefail
+          az containerapp show \
+            --name "$PORTAL_CONTAINER_APP" \
+            --resource-group "$PORTAL_RESOURCE_GROUP" \
+            --query '{fqdn:properties.configuration.ingress.fqdn,latestRevision:properties.latestRevisionName,image:properties.template.containers[0].image}' \
+            --output table
+
+      - name: Smoke test anonymous session bootstrap
+        shell: bash
+        run: |
+          set -euo pipefail
+          for attempt in {1..12}; do
+            status="$(curl -sS -o /tmp/session.json -w '%{http_code}' https://portal.e3isolucoes.com.br/api/auth/session || true)"
+            if [ "$status" = "200" ]; then
+              node -e "const fs=require('fs'); const p=JSON.parse(fs.readFileSync('/tmp/session.json','utf8')); if(p.authenticated!==false) process.exit(1)"
+              echo "Portal anonymous session probe is healthy."
+              exit 0
+            fi
+            echo "Attempt $attempt returned HTTP $status"
+            sleep 10
+          done
+          echo "Portal did not expose the corrected anonymous session contract."
+          cat /tmp/session.json || true
+          exit 1
