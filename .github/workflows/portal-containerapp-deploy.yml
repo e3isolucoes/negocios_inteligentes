@@ -14,6 +14,7 @@ concurrency:
 
 permissions:
   contents: read
+  id-token: write
 
 env:
   AZURE_REGISTRY_NAME: acre3i431811
@@ -43,15 +44,24 @@ jobs:
     steps:
       - uses: actions/checkout@v7
 
-      - name: Require Azure deployment credentials
+      - name: Require Azure OIDC identifiers
         env:
-          AZURE_CREDENTIALS: ${{ secrets.AZURE_CREDENTIALS }}
-        run: test -n "$AZURE_CREDENTIALS"
+          AZURE_CLIENT_ID: ${{ vars.AZURE_CLIENT_ID }}
+          AZURE_TENANT_ID: ${{ vars.AZURE_TENANT_ID }}
+          AZURE_SUBSCRIPTION_ID: ${{ vars.AZURE_SUBSCRIPTION_ID }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -n "$AZURE_CLIENT_ID"
+          test -n "$AZURE_TENANT_ID"
+          test -n "$AZURE_SUBSCRIPTION_ID"
 
-      - name: Authenticate to Azure
+      - name: Authenticate to Azure with OIDC
         uses: azure/login@v2
         with:
-          creds: ${{ secrets.AZURE_CREDENTIALS }}
+          client-id: ${{ vars.AZURE_CLIENT_ID }}
+          tenant-id: ${{ vars.AZURE_TENANT_ID }}
+          subscription-id: ${{ vars.AZURE_SUBSCRIPTION_ID }}
 
       - name: Build patched Portal image in ACR
         id: image
