@@ -86,29 +86,70 @@ jobs:
             --image "${{ steps.image.outputs.image }}"
 
       - name: Verify deployed revision
+        id: portal
         shell: bash
         run: |
           set -euo pipefail
-          az containerapp show \
+          FQDN="$(az containerapp show \
             --name "$PORTAL_CONTAINER_APP" \
             --resource-group "$PORTAL_RESOURCE_GROUP" \
-            --query '{fqdn:properties.configuration.ingress.fqdn,latestRevision:properties.latestRevisionName,image:properties.template.containers[0].image}' \
-            --output table
+            --query 'properties.configuration.ingress.fqdn' \
+            --output tsv)"
+          LATEST_REVISION="$(az containerapp show \
+            --name "$PORTAL_CONTAINER_APP" \
+            --resource-group "$PORTAL_RESOURCE_GROUP" \
+            --query 'properties.latestRevisionName' \
+            --output tsv)"
+          DEPLOYED_IMAGE="$(az containerapp show \
+            --name "$PORTAL_CONTAINER_APP" \
+            --resource-group "$PORTAL_RESOURCE_GROUP" \
+            --query 'properties.template.containers[0].image' \
+            --output tsv)"
 
-      - name: Smoke test anonymous session bootstrap
+          test -n "$FQDN"
+          test "$DEPLOYED_IMAGE" = "${{ steps.image.outputs.image }}"
+
+          echo "fqdn=$FQDN" >> "$GITHUB_OUTPUT"
+          echo "latest_revision=$LATEST_REVISION" >> "$GITHUB_OUTPUT"
+          echo "Deployed revision: $LATEST_REVISION"
+          echo "Deployed image: $DEPLOYED_IMAGE"
+          echo "Container App FQDN: $FQDN"
+
+      - name: Smoke test deployed Container App
         shell: bash
+        env:
+          PORTAL_FQDN: ${{ steps.portal.outputs.fqdn }}
         run: |
           set -euo pipefail
+          URL="https://$PORTAL_FQDN/api/auth/session"
+
           for attempt in {1..12}; do
-            status="$(curl -sS -o /tmp/session.json -w '%{http_code}' https://portal.e3isolucoes.com.br/api/auth/session || true)"
+            status="$(curl -sS -o /tmp/session.json -w '%{http_code}' "$URL" || true)"
             if [ "$status" = "200" ]; then
               node -e "const fs=require('fs'); const p=JSON.parse(fs.readFileSync('/tmp/session.json','utf8')); if(p.authenticated!==false) process.exit(1)"
-              echo "Portal anonymous session probe is healthy."
+              echo "Deployed Container App anonymous session probe is healthy."
               exit 0
             fi
-            echo "Attempt $attempt returned HTTP $status"
+            echo "Attempt $attempt returned HTTP $status from $URL"
             sleep 10
           done
-          echo "Portal did not expose the corrected anonymous session contract."
+
+          echo "Deployed Container App did not expose the corrected anonymous session contract."
           cat /tmp/session.json || true
           exit 1
+
+      - name: Check public Portal domain routing
+        shell: bash
+        continue-on-error: true
+        run: |
+          set -euo pipefail
+          status="$(curl -sS -o /tmp/public-session.json -w '%{http_code}' https://portal.e3isolucoes.com.br/api/auth/session || true)"
+          echo "portal.e3isolucoes.com.br returned HTTP $status"
+          cat /tmp/public-session.json || true
+
+          if [ "$status" != "200" ]; then
+            echo "::warning::The public Portal domain is not exposing the same anonymous-session contract as the deployed test Container App. Check custom-domain/DNS/traffic routing."
+            exit 1
+          fi
+
+          node -e "const fs=require('fs'); const p=JSON.parse(fs.readFileSync('/tmp/public-session.json','utf8')); if(p.authenticated!==false) process.exit(1)"
