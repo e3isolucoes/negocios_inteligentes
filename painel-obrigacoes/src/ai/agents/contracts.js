@@ -1,0 +1,1 @@
+/** @typedef {{id:string,organizationId:string,status:string}} AgentRun @typedef {{id:string,runId:string,type:string}} AgentStep @typedef {{toolId:string,input:unknown}} ToolCall @typedef {{id:string,reason:string,status:string}} ApprovalRequest */ export {};
