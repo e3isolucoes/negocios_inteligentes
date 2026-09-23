@@ -73,3 +73,24 @@ O workflow segue a sequência:
 7. valida o domínio público `portal.e3isolucoes.com.br`.
 
 Esse fluxo evita validar acidentalmente uma revisão antiga e evita promover uma revisão que ainda não passou pelo contrato de sessão anônima.
+
+
+## Administração de acessos no Portal
+
+A imagem do Portal inclui a página protegida:
+
+`/admin-central.html`
+
+O acesso à página exige sessão válida e autorização administrativa no backend. Usuários não administrativos recebem `403`; a tela não é exposta como arquivo público.
+
+A aba **Ferramentas** usa:
+
+- `GET /api/client-tools` para listar o catálogo e o estado `granted`;
+- `PUT /api/admin/organizations/:organizationId/client-tools/:toolId` para conceder acesso;
+- `DELETE /api/admin/organizations/:organizationId/client-tools/:toolId` para revogar acesso.
+
+A organização é derivada da sessão autenticada e validada no servidor. O cliente não pode escolher outro tenant por payload.
+
+A página também inclui gestão de usuários da organização, com proteção contra auto-revogação e remoção do último administrador.
+
+O link **Administração** é inserido no próprio Portal somente quando `GET /api/admin/access` retorna `authorized: true`.

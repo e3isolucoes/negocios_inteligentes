@@ -1,0 +1,212 @@
+// E3I_ADMIN_USERS_PATCH_V1
+const e3iAdminUsersFs = require('fs');
+const e3iAdminUsersPath = require('path');
+const e3iAdminUsersCrypto = require('crypto');
+const E3I_ADMIN_USERS_DATA_FILE = process.env.E3I_PORTAL_DATA_FILE || '/app/data/bigquery_dataset.json';
+const E3I_ADMIN_USERS_ROLES = new Set(['OPERATOR', 'E3I_ADMIN']);
+const E3I_ADMIN_USERS_ROOT_EMAIL = String(process.env.E3I_ROOT_ADMIN_EMAIL || 'admin@e3isolucoes.com.br').trim().toLowerCase();
+
+function e3iAdminUsersClone(value) { return JSON.parse(JSON.stringify(value)); }
+function e3iAdminUsersNormalizeEmail(value) { return String(value || '').trim().toLowerCase(); }
+function e3iAdminUsersIsRootEmail(value) { return e3iAdminUsersNormalizeEmail(value) === E3I_ADMIN_USERS_ROOT_EMAIL; }
+function e3iAdminUsersSafeText(value, maxLength) { const text = String(value || '').trim(); return text && text.length <= maxLength && !/[\u0000-\u001f\u007f]/.test(text) ? text : null; }
+function e3iAdminUsersValidEmail(value) { const email = e3iAdminUsersNormalizeEmail(value); return email.length <= 254 && /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email) ? email : null; }
+function e3iAdminUsersReadDataset() { return JSON.parse(e3iAdminUsersFs.readFileSync(E3I_ADMIN_USERS_DATA_FILE, 'utf8')); }
+function e3iAdminUsersUsers(dataset) { if (Array.isArray(dataset?.tables?.users?.data)) return dataset.tables.users.data; if (Array.isArray(dataset?.users)) return dataset.users; if (Array.isArray(dataset?.data?.users)) return dataset.data.users; return []; }
+function e3iAdminUsersMemberships(dataset) { const candidates = [dataset?.tables?.organization_memberships?.data, dataset?.memberships, dataset?.organizationMembers, dataset?.tenantMemberships, dataset?.data?.memberships]; return candidates.find(Array.isArray) || []; }
+function e3iAdminUsersTenants(dataset) { return Array.isArray(dataset?.tables?.tenants?.data) ? dataset.tables.tenants.data : (Array.isArray(dataset?.tenants) ? dataset.tenants : []); }
+function e3iAdminUsersWriteDataset(dataset, organizationId) {
+  if (dataset?.tables?.users) dataset.tables.users.rowsCount = e3iAdminUsersUsers(dataset).length;
+  if (dataset?.tables?.organization_memberships) dataset.tables.organization_memberships.rowsCount = e3iAdminUsersMemberships(dataset).length;
+  const tenant = e3iAdminUsersTenants(dataset).find((item) => String(item?.id || '') === String(organizationId));
+  if (tenant) tenant.usersCount = new Set(e3iAdminUsersMemberships(dataset).filter((m) => String(m?.organizationId || '') === String(organizationId) && String(m?.status || 'ACTIVE').toUpperCase() === 'ACTIVE').map((m) => String(m?.userId || '')).filter(Boolean)).size;
+  dataset.lastSyncAt = new Date().toISOString();
+  const dir = e3iAdminUsersPath.dirname(E3I_ADMIN_USERS_DATA_FILE); e3iAdminUsersFs.mkdirSync(dir, { recursive: true, mode: 0o700 }); const temp = `${E3I_ADMIN_USERS_DATA_FILE}.${process.pid}.${Date.now()}.tmp`; const backup = `${E3I_ADMIN_USERS_DATA_FILE}.admin-users.bak`; let fd;
+  try { fd = e3iAdminUsersFs.openSync(temp, 'w', 0o600); e3iAdminUsersFs.writeFileSync(fd, `${JSON.stringify(dataset, null, 2)}\n`, 'utf8'); e3iAdminUsersFs.fsyncSync(fd); e3iAdminUsersFs.closeSync(fd); fd = undefined; if (e3iAdminUsersFs.existsSync(E3I_ADMIN_USERS_DATA_FILE)) { e3iAdminUsersFs.copyFileSync(E3I_ADMIN_USERS_DATA_FILE, backup); try { e3iAdminUsersFs.chmodSync(backup, 0o600); } catch (_) {} } e3iAdminUsersFs.renameSync(temp, E3I_ADMIN_USERS_DATA_FILE); try { e3iAdminUsersFs.chmodSync(E3I_ADMIN_USERS_DATA_FILE, 0o600); } catch (_) {} }
+  finally { if (fd !== undefined) { try { e3iAdminUsersFs.closeSync(fd); } catch (_) {} } if (e3iAdminUsersFs.existsSync(temp)) { try { e3iAdminUsersFs.unlinkSync(temp); } catch (_) {} } }
+}
+function e3iAdminUsersAuthCandidates(authResult) { const user = authResult?.user || authResult?.session?.user || authResult?.principal || {}; return { user, ids: [authResult?.userId, authResult?.actorId, user?.id, user?.userId, authResult?.session?.userId].filter(Boolean).map(String), emails: [authResult?.email, user?.email, authResult?.session?.email].filter(Boolean).map(e3iAdminUsersNormalizeEmail) }; }
+function e3iAdminUsersStoredUser(authResult, dataset) { const candidates = e3iAdminUsersAuthCandidates(authResult); return e3iAdminUsersUsers(dataset).find((user) => candidates.ids.includes(String(user?.id || user?.userId || '')) || candidates.emails.includes(e3iAdminUsersNormalizeEmail(user?.email))) || null; }
+
+function e3iAdminUsersRole(authResult, dataset) {
+  const c = e3iAdminUsersAuthCandidates(authResult);
+  const stored = e3iAdminUsersStoredUser(authResult, dataset);
+  if (c.emails.includes(E3I_ADMIN_USERS_ROOT_EMAIL) || e3iAdminUsersIsRootEmail(stored?.email)) return 'E3I_ADMIN';
+  if (!stored || String(stored?.status || 'ACTIVE').toUpperCase() !== 'ACTIVE') return '';
+  const roles = [stored?.role, stored?.systemRole, stored?.portalRole, ...(Array.isArray(stored?.roles) ? stored.roles : [])];
+  const delegatedBy = e3iAdminUsersNormalizeEmail(stored?.adminCentralGrantedBy);
+  return delegatedBy === E3I_ADMIN_USERS_ROOT_EMAIL &&
+    roles.some((role) => String(role || '').toUpperCase() === 'E3I_ADMIN')
+    ? 'E3I_ADMIN'
+    : '';
+}
+function e3iAdminUsersOrganization(authResult, dataset) {
+  const c = e3iAdminUsersAuthCandidates(authResult); const stored = e3iAdminUsersStoredUser(authResult, dataset); const direct = [authResult?.organizationId, authResult?.activeOrganizationId, authResult?.tenantId, authResult?.orgId, authResult?.organization?.id, authResult?.tenant?.id, authResult?.session?.organizationId, c.user?.organizationId, c.user?.tenantId, stored?.tenantId, stored?.organizationId].find((value) => value !== undefined && value !== null && String(value).trim()); if (direct) return String(direct).trim();
+  const memberships = e3iAdminUsersMemberships(dataset).filter((m) => (c.ids.includes(String(m?.userId || m?.memberId || '')) || c.emails.includes(e3iAdminUsersNormalizeEmail(m?.email))) && !['INACTIVE','DISABLED','SUSPENDED'].includes(String(m?.status || 'ACTIVE').toUpperCase())); const ids = [...new Set(memberships.map((m) => String(m?.organizationId || m?.tenantId || '').trim()).filter(Boolean))]; return ids.length === 1 ? ids[0] : '';
+}
+function e3iAdminUsersRequireAdmin(req, res) {
+  const authResult = validateSession(req, res); if (!authResult) return null; let dataset; try { dataset = e3iAdminUsersReadDataset(); } catch (_) { return res.status(500).json({ code: 'INTERNAL_ERROR', error: 'Não foi possível carregar os usuários.' }); }
+  if (e3iAdminUsersRole(authResult, dataset) !== 'E3I_ADMIN') { res.status(403).json({ code: 'ADMIN_REQUIRED', error: 'Acesso administrativo necessário.' }); return null; }
+  const organizationId = e3iAdminUsersOrganization(authResult, dataset); const requested = String(req.params?.organizationId || '').trim(); if (!organizationId || !requested || organizationId !== requested) { res.status(404).json({ code: 'NOT_FOUND', error: 'Recurso não encontrado.' }); return null; }
+  const c = e3iAdminUsersAuthCandidates(authResult); const stored = e3iAdminUsersStoredUser(authResult, dataset); const actorEmail = e3iAdminUsersNormalizeEmail(authResult?.email || c.user?.email || stored?.email);
+  return { authResult, dataset, organizationId, actorId: String(authResult?.userId || authResult?.actorId || c.user?.id || stored?.id || 'admin').slice(0,160), actorEmail, isRoot: actorEmail === E3I_ADMIN_USERS_ROOT_EMAIL };
+}
+function e3iAdminUsersRequireWrite(req, res) { if (String(req.get('x-e3i-admin-request') || '') !== '1') { res.status(403).json({ code: 'ADMIN_REQUEST_HEADER_REQUIRED', error: 'Requisição administrativa inválida.' }); return false; } return true; }
+function e3iAdminUsersMembership(dataset, organizationId, userId) { return e3iAdminUsersMemberships(dataset).find((m) => String(m?.organizationId || m?.tenantId || '') === String(organizationId) && String(m?.userId || m?.memberId || '') === String(userId)); }
+function e3iAdminUsersRelation(dataset, organizationId, userId) { const user = e3iAdminUsersUsers(dataset).find((u) => String(u?.id || u?.userId || '') === String(userId)); if (!user) return null; const membership = e3iAdminUsersMembership(dataset, organizationId, userId); if (!membership && String(user?.tenantId || user?.organizationId || '') !== String(organizationId)) return null; return { user, membership }; }
+
+function e3iAdminUsersIsAdmin(user) {
+  if (e3iAdminUsersIsRootEmail(user?.email)) return true;
+  const roles = [user?.role, user?.systemRole, user?.portalRole, ...(Array.isArray(user?.roles) ? user.roles : [])];
+  return e3iAdminUsersNormalizeEmail(user?.adminCentralGrantedBy) === E3I_ADMIN_USERS_ROOT_EMAIL &&
+    roles.some((role) => String(role || '').toUpperCase() === 'E3I_ADMIN');
+}
+function e3iAdminUsersActiveAdminCount(dataset, organizationId) { return e3iAdminUsersUsers(dataset).filter((user) => { if (String(user?.status || 'ACTIVE').toUpperCase() !== 'ACTIVE' || !e3iAdminUsersIsAdmin(user)) return false; const membership = e3iAdminUsersMembership(dataset, organizationId, user.id || user.userId); if (membership && ['INACTIVE','DISABLED','SUSPENDED'].includes(String(membership.status || '').toUpperCase())) return false; return Boolean(membership) || String(user?.tenantId || user?.organizationId || '') === String(organizationId); }).length; }
+
+function e3iAdminUsersPublic(user, principal) {
+  const email = e3iAdminUsersNormalizeEmail(user.email);
+  return {
+    id: String(user.id || user.userId || ''),
+    name: String(user.name || ''),
+    email: String(user.email || ''),
+    role: e3iAdminUsersIsAdmin(user) ? 'E3I_ADMIN' : 'OPERATOR',
+    status: String(user.status || 'ACTIVE').toUpperCase() === 'ACTIVE' ? 'ACTIVE' : 'SUSPENDED',
+    mustChangePassword: user.mustChangePassword === true,
+    createdAt: String(user.createdAt || ''),
+    updatedAt: String(user.updatedAt || user.passwordChangedAt || ''),
+    isSelf: String(user.id || user.userId || '') === principal.actorId || email === principal.actorEmail,
+    isRoot: email === E3I_ADMIN_USERS_ROOT_EMAIL,
+  };
+}
+function e3iAdminUsersValidateInput(body) { if (!body || typeof body !== 'object' || Array.isArray(body)) throw Object.assign(new Error('Corpo da requisição inválido.'), { status:400, code:'INVALID_BODY' }); if (Object.keys(body).some((key) => !['name','email','role'].includes(key))) throw Object.assign(new Error('Campo não permitido.'), { status:400, code:'UNKNOWN_FIELD' }); const name = e3iAdminUsersSafeText(body.name,120); const email = e3iAdminUsersValidEmail(body.email); const role = String(body.role || '').toUpperCase(); if (!name) throw Object.assign(new Error('Nome inválido.'), {status:400,code:'INVALID_NAME'}); if (!email) throw Object.assign(new Error('E-mail inválido.'), {status:400,code:'INVALID_EMAIL'}); if (!E3I_ADMIN_USERS_ROLES.has(role)) throw Object.assign(new Error('Papel inválido.'), {status:400,code:'INVALID_ROLE'}); return {name,email,role}; }
+function e3iAdminUsersSyncLiveUser(stored, create=false) { try { if (typeof users !== 'undefined' && Array.isArray(users)) { let live = users.find((u) => String(u?.id || '') === String(stored.id) || e3iAdminUsersNormalizeEmail(u?.email) === e3iAdminUsersNormalizeEmail(stored.email)); if (!live && create) users.push(e3iAdminUsersClone(stored)); else if (live) Object.assign(live, e3iAdminUsersClone(stored)); } } catch (_) {} }
+function e3iAdminUsersSyncLiveMembership(stored, create=false) { const collections=[]; try { if (typeof organizationMemberships !== 'undefined' && Array.isArray(organizationMemberships)) collections.push(organizationMemberships); } catch (_) {} try { if (typeof memberships !== 'undefined' && Array.isArray(memberships)) collections.push(memberships); } catch (_) {} for (const collection of collections) { let live = collection.find((m) => String(m?.id || '') === String(stored.id) || (String(m?.userId || '') === String(stored.userId) && String(m?.organizationId || '') === String(stored.organizationId))); if (!live && create) collection.push(e3iAdminUsersClone(stored)); else if (live) Object.assign(live,e3iAdminUsersClone(stored)); } }
+function e3iAdminUsersRevokeSessions(userId) { let count=0; try { if (typeof sessions !== 'undefined' && Array.isArray(sessions)) { const now=new Date().toISOString(); for (const session of sessions) if (String(session?.userId || '') === String(userId) && !session.revokedAt) { session.revokedAt=now; count++; } } } catch (_) {} return count; }
+function e3iAdminUsersAudit(action, principal, userId, detail='') { try { if (typeof auditLogs !== 'undefined' && Array.isArray(auditLogs)) auditLogs.unshift({ id:`log-admin-${Date.now()}-${Math.random().toString(16).slice(2,8)}`, timestamp:new Date().toISOString().replace('T',' ').substring(0,19), userId:principal.actorId, userName:'E3I Admin', action, module:'Administração central', ipAddress:'', status:'SUCCESS', details:`${userId}${detail ? ` · ${detail}` : ''}`.slice(0,240) }); } catch (_) {} }
+function e3iAdminUsersPersist(principal) { try { if (typeof saveStorage === 'function') saveStorage(); } catch (_) {} e3iAdminUsersWriteDataset(principal.dataset, principal.organizationId); }
+function e3iAdminUsersClearSetup(user) { delete user.passwordSetupCodeHash; delete user.passwordSetupExpiresAt; delete user.passwordSetupAttempts; delete user.passwordSetupLastSentAt; }
+function e3iAdminUsersError(res,error,fallback) { const status=Number(error?.status)||500; if (status>=500) console.error('[admin-users] operation failed'); return res.status(status).json({ code: status<500 ? String(error?.code || 'INVALID_REQUEST') : 'INTERNAL_ERROR', error: status<500 ? String(error?.message || fallback) : fallback }); }
+function e3iAdminUsersPrivilegedTarget(user) { return e3iAdminUsersIsRootEmail(user?.email) || e3iAdminUsersIsAdmin(user); }
+function e3iAdminUsersRequireRootForPrivileged(principal, res, user, nextRole = '') {
+  if (!principal.isRoot && (e3iAdminUsersPrivilegedTarget(user) || String(nextRole || '').toUpperCase() === 'E3I_ADMIN')) {
+    res.status(403).json({ code: 'ROOT_ADMIN_ONLY', error: 'Somente o administrador raiz pode conceder, alterar ou revogar acesso administrativo.' });
+    return false;
+  }
+  return true;
+}
+function e3iAdminUsersApplyDelegation(user, role, now) {
+  if (String(role || '').toUpperCase() === 'E3I_ADMIN' && !e3iAdminUsersIsRootEmail(user?.email)) {
+    user.adminCentralGrantedBy = E3I_ADMIN_USERS_ROOT_EMAIL;
+    user.adminCentralGrantedAt = now || new Date().toISOString();
+  } else {
+    delete user.adminCentralGrantedBy;
+    delete user.adminCentralGrantedAt;
+  }
+}
+
+
+app.get('/api/admin/organizations/:organizationId/users', (req, res) => {
+  try {
+    const principal = e3iAdminUsersRequireAdmin(req, res); if (!principal) return;
+    const list = e3iAdminUsersUsers(principal.dataset)
+      .filter((u) => Boolean(e3iAdminUsersRelation(principal.dataset, principal.organizationId, u.id || u.userId)))
+      .map((u) => e3iAdminUsersPublic(u, principal))
+      .sort((a, b) => a.name.localeCompare(b.name, 'pt-BR'));
+    res.set('Cache-Control', 'no-store');
+    return res.json({ organizationId: principal.organizationId, users: list, permissions: { canDelegateAdmin: principal.isRoot } });
+  } catch (error) { return e3iAdminUsersError(res, error, 'Não foi possível listar os usuários.'); }
+});
+
+app.post('/api/admin/organizations/:organizationId/users', (req, res) => {
+  try {
+    const principal = e3iAdminUsersRequireAdmin(req, res); if (!principal || !e3iAdminUsersRequireWrite(req, res)) return;
+    const input = e3iAdminUsersValidateInput(req.body);
+    if (input.role === 'E3I_ADMIN' && !principal.isRoot) return res.status(403).json({ code: 'ROOT_ADMIN_ONLY', error: 'Somente o administrador raiz pode conceder acesso administrativo.' });
+    if (e3iAdminUsersIsRootEmail(input.email) && input.role !== 'E3I_ADMIN') return res.status(409).json({ code: 'ROOT_ADMIN_PROTECTED', error: 'O administrador raiz deve permanecer com papel administrativo.' });
+    const all = e3iAdminUsersUsers(principal.dataset);
+    if (all.some((u) => e3iAdminUsersNormalizeEmail(u.email) === input.email)) return res.status(409).json({ code: 'EMAIL_ALREADY_EXISTS', error: 'Já existe uma conta com este e-mail.' });
+    const now = new Date().toISOString();
+    const user = { id: `usr-${e3iAdminUsersCrypto.randomUUID()}`, name: input.name, email: input.email, passwordHash: '', status: 'ACTIVE', role: input.role, systemRole: input.role, tenantId: principal.organizationId, createdAt: now, updatedAt: now, mustChangePassword: true, passwordOnboardingVersion: 0 };
+    e3iAdminUsersApplyDelegation(user, input.role, now);
+    all.push(user);
+    const membership = { id: `mem-${e3iAdminUsersCrypto.randomUUID()}`, userId: user.id, organizationId: principal.organizationId, role: input.role === 'E3I_ADMIN' ? 'ADMIN' : 'MEMBER', status: 'ACTIVE', joinedAt: now };
+    e3iAdminUsersMemberships(principal.dataset).push(membership);
+    e3iAdminUsersSyncLiveUser(user, true); e3iAdminUsersSyncLiveMembership(membership, true);
+    e3iAdminUsersAudit('ADMIN_USER_CREATED', principal, user.id, `role=${input.role}`); e3iAdminUsersPersist(principal);
+    return res.status(201).json({ user: e3iAdminUsersPublic(user, principal) });
+  } catch (error) { return e3iAdminUsersError(res, error, 'Não foi possível criar o usuário.'); }
+});
+
+app.put('/api/admin/organizations/:organizationId/users/:userId', (req, res) => {
+  try {
+    const principal = e3iAdminUsersRequireAdmin(req, res); if (!principal || !e3iAdminUsersRequireWrite(req, res)) return;
+    const relation = e3iAdminUsersRelation(principal.dataset, principal.organizationId, req.params.userId);
+    if (!relation) return res.status(404).json({ code: 'NOT_FOUND', error: 'Recurso não encontrado.' });
+    const input = e3iAdminUsersValidateInput(req.body);
+    if (!e3iAdminUsersRequireRootForPrivileged(principal, res, relation.user, input.role)) return;
+    const targetRoot = e3iAdminUsersIsRootEmail(relation.user.email);
+    if (targetRoot && (input.role !== 'E3I_ADMIN' || !e3iAdminUsersIsRootEmail(input.email))) return res.status(409).json({ code: 'ROOT_ADMIN_PROTECTED', error: 'O administrador raiz não pode ser rebaixado nem ter o e-mail administrativo alterado.' });
+    const all = e3iAdminUsersUsers(principal.dataset);
+    if (all.some((u) => String(u.id || u.userId) !== String(relation.user.id || relation.user.userId) && e3iAdminUsersNormalizeEmail(u.email) === input.email)) return res.status(409).json({ code: 'EMAIL_ALREADY_EXISTS', error: 'Já existe uma conta com este e-mail.' });
+    const currentRole = e3iAdminUsersIsAdmin(relation.user) ? 'E3I_ADMIN' : 'OPERATOR';
+    const self = String(relation.user.id || '') === principal.actorId || e3iAdminUsersNormalizeEmail(relation.user.email) === principal.actorEmail;
+    if (currentRole === 'E3I_ADMIN' && input.role !== 'E3I_ADMIN' && (self || e3iAdminUsersActiveAdminCount(principal.dataset, principal.organizationId) <= 1)) return res.status(409).json({ code: 'LAST_ADMIN_PROTECTED', error: self ? 'Você não pode remover seu próprio papel administrativo nesta sessão.' : 'A organização deve manter ao menos um administrador E3I ativo.' });
+    const securityChanged = e3iAdminUsersNormalizeEmail(relation.user.email) !== input.email || currentRole !== input.role;
+    Object.assign(relation.user, { name: input.name, email: input.email, role: input.role, systemRole: input.role, tenantId: principal.organizationId, updatedAt: new Date().toISOString() });
+    e3iAdminUsersApplyDelegation(relation.user, input.role, relation.user.updatedAt);
+    if (relation.membership) relation.membership.role = input.role === 'E3I_ADMIN' ? 'ADMIN' : 'MEMBER';
+    if (securityChanged) e3iAdminUsersRevokeSessions(relation.user.id);
+    e3iAdminUsersSyncLiveUser(relation.user); if (relation.membership) e3iAdminUsersSyncLiveMembership(relation.membership);
+    e3iAdminUsersAudit('ADMIN_USER_UPDATED', principal, relation.user.id, `role=${input.role}`); e3iAdminUsersPersist(principal);
+    return res.json({ user: e3iAdminUsersPublic(relation.user, principal) });
+  } catch (error) { return e3iAdminUsersError(res, error, 'Não foi possível atualizar o usuário.'); }
+});
+
+app.post('/api/admin/organizations/:organizationId/users/:userId/suspend', (req, res) => {
+  try {
+    const principal = e3iAdminUsersRequireAdmin(req, res); if (!principal || !e3iAdminUsersRequireWrite(req, res)) return;
+    const relation = e3iAdminUsersRelation(principal.dataset, principal.organizationId, req.params.userId); if (!relation) return res.status(404).json({ code: 'NOT_FOUND', error: 'Recurso não encontrado.' });
+    if (!e3iAdminUsersRequireRootForPrivileged(principal, res, relation.user)) return;
+    const self = String(relation.user.id || '') === principal.actorId || e3iAdminUsersNormalizeEmail(relation.user.email) === principal.actorEmail;
+    if (self || e3iAdminUsersIsRootEmail(relation.user.email)) return res.status(409).json({ code: 'SELF_REVOKE_BLOCKED', error: 'O administrador raiz não pode ser suspenso.' });
+    if (e3iAdminUsersIsAdmin(relation.user) && e3iAdminUsersActiveAdminCount(principal.dataset, principal.organizationId) <= 1) return res.status(409).json({ code: 'LAST_ADMIN_PROTECTED', error: 'A organização deve manter ao menos um administrador E3I ativo.' });
+    relation.user.status = 'SUSPENDED'; relation.user.updatedAt = new Date().toISOString(); if (relation.membership) relation.membership.status = 'SUSPENDED';
+    e3iAdminUsersRevokeSessions(relation.user.id); e3iAdminUsersSyncLiveUser(relation.user); if (relation.membership) e3iAdminUsersSyncLiveMembership(relation.membership);
+    e3iAdminUsersAudit('ADMIN_USER_SUSPENDED', principal, relation.user.id); e3iAdminUsersPersist(principal);
+    return res.json({ user: e3iAdminUsersPublic(relation.user, principal) });
+  } catch (error) { return e3iAdminUsersError(res, error, 'Não foi possível suspender o usuário.'); }
+});
+
+app.post('/api/admin/organizations/:organizationId/users/:userId/reactivate', (req, res) => {
+  try {
+    const principal = e3iAdminUsersRequireAdmin(req, res); if (!principal || !e3iAdminUsersRequireWrite(req, res)) return;
+    const relation = e3iAdminUsersRelation(principal.dataset, principal.organizationId, req.params.userId); if (!relation) return res.status(404).json({ code: 'NOT_FOUND', error: 'Recurso não encontrado.' });
+    if (!e3iAdminUsersRequireRootForPrivileged(principal, res, relation.user)) return;
+    relation.user.status = 'ACTIVE'; relation.user.updatedAt = new Date().toISOString(); if (relation.membership) relation.membership.status = 'ACTIVE';
+    e3iAdminUsersSyncLiveUser(relation.user); if (relation.membership) e3iAdminUsersSyncLiveMembership(relation.membership);
+    e3iAdminUsersAudit('ADMIN_USER_REACTIVATED', principal, relation.user.id); e3iAdminUsersPersist(principal);
+    return res.json({ user: e3iAdminUsersPublic(relation.user, principal) });
+  } catch (error) { return e3iAdminUsersError(res, error, 'Não foi possível reativar o usuário.'); }
+});
+
+app.post('/api/admin/organizations/:organizationId/users/:userId/revoke-sessions', (req, res) => {
+  try {
+    const principal = e3iAdminUsersRequireAdmin(req, res); if (!principal || !e3iAdminUsersRequireWrite(req, res)) return;
+    const relation = e3iAdminUsersRelation(principal.dataset, principal.organizationId, req.params.userId); if (!relation) return res.status(404).json({ code: 'NOT_FOUND', error: 'Recurso não encontrado.' });
+    if (!e3iAdminUsersRequireRootForPrivileged(principal, res, relation.user)) return;
+    const revoked = e3iAdminUsersRevokeSessions(relation.user.id); e3iAdminUsersAudit('ADMIN_USER_SESSIONS_REVOKED', principal, relation.user.id, `count=${revoked}`); e3iAdminUsersPersist(principal);
+    return res.json({ success: true, revokedSessions: revoked });
+  } catch (error) { return e3iAdminUsersError(res, error, 'Não foi possível encerrar as sessões.'); }
+});
+
+app.post('/api/admin/organizations/:organizationId/users/:userId/force-first-login', (req, res) => {
+  try {
+    const principal = e3iAdminUsersRequireAdmin(req, res); if (!principal || !e3iAdminUsersRequireWrite(req, res)) return;
+    const relation = e3iAdminUsersRelation(principal.dataset, principal.organizationId, req.params.userId); if (!relation) return res.status(404).json({ code: 'NOT_FOUND', error: 'Recurso não encontrado.' });
+    if (!e3iAdminUsersRequireRootForPrivileged(principal, res, relation.user)) return;
+    relation.user.mustChangePassword = true; relation.user.passwordOnboardingVersion = 0; relation.user.updatedAt = new Date().toISOString();
+    e3iAdminUsersClearSetup(relation.user); e3iAdminUsersRevokeSessions(relation.user.id); e3iAdminUsersSyncLiveUser(relation.user);
+    e3iAdminUsersAudit('ADMIN_USER_FIRST_LOGIN_FORCED', principal, relation.user.id); e3iAdminUsersPersist(principal);
+    return res.json({ user: e3iAdminUsersPublic(relation.user, principal) });
+  } catch (error) { return e3iAdminUsersError(res, error, 'Não foi possível exigir novo primeiro acesso.'); }
+});
