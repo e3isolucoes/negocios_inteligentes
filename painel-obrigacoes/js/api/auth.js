@@ -115,12 +115,13 @@ export async function signIn(email, password) {
       });
       const session = portalCognitoSession(payload);
       if (!session) throw Object.assign(new Error('Sessão AWS inválida.'), { code: 'session_invalid' });
-      saveSession(session);
-      return { data: { session }, error: null };
+      const saved = saveSession(session);
+      return { data: { session: saved }, error: null };
     }
     const result = await cognitoCall('InitiateAuth', { AuthFlow: 'USER_PASSWORD_AUTH', ClientId: config().cognitoClientId, AuthParameters: { USERNAME: email, PASSWORD: password } });
-    const session = cognitoSession(result.AuthenticationResult); saveSession(session);
-    return { data: { session }, error: null };
+    const session = cognitoSession(result.AuthenticationResult);
+    const saved = saveSession(session);
+    return { data: { session: saved }, error: null };
   } catch (error) { return { data: null, error }; }
 }
 export function getSignInErrorMessage(error) {
@@ -200,8 +201,8 @@ export function setSession(tokens) {
     try { session = portalSupabaseSession(tokens); } catch { session = null; }
   }
   if (!session) return Promise.resolve({ data: { session: null }, error: new Error('Sessão do portal inválida ou expirada.') });
-  saveSession(session);
-  return Promise.resolve({ data: { session }, error: null });
+  const saved = saveSession(session);
+  return Promise.resolve({ data: { session: saved }, error: null });
 }
 
 function readStoredSession() { return memorySession; }
