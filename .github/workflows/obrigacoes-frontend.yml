@@ -40,6 +40,17 @@ jobs:
           test -s painel-obrigacoes/staticwebapp.config.json
           test -s painel-obrigacoes/js/api/awsDataClient.js
 
+      - name: Materialize pinned Supabase browser runtime
+        run: |
+          set -euo pipefail
+          mkdir -p painel-obrigacoes/vendor/supabase-2.112.3
+          curl -fsSL --retry 3 \
+            https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.112.3/dist/umd/supabase.js \
+            -o painel-obrigacoes/vendor/supabase-2.112.3/supabase.js
+          test -s painel-obrigacoes/vendor/supabase-2.112.3/supabase.js
+          grep -Fq 'vendor/supabase-2.112.3/supabase.js' painel-obrigacoes/index.html
+          ! grep -Fq 'cdn.jsdelivr.net/npm/@supabase/supabase-js' painel-obrigacoes/index.html
+
       - name: Install migrated validation dependencies
         run: |
           npm ci --ignore-scripts --prefix painel-obrigacoes
@@ -96,6 +107,15 @@ jobs:
       AZURE_DEPLOY_TOKEN: ${{ secrets.AZURE_STATIC_WEB_APPS_API_TOKEN }}
     steps:
       - uses: actions/checkout@v4
+
+      - name: Materialize pinned Supabase browser runtime
+        run: |
+          set -euo pipefail
+          mkdir -p painel-obrigacoes/vendor/supabase-2.112.3
+          curl -fsSL --retry 3 \
+            https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.112.3/dist/umd/supabase.js \
+            -o painel-obrigacoes/vendor/supabase-2.112.3/supabase.js
+          test -s painel-obrigacoes/vendor/supabase-2.112.3/supabase.js
 
       - name: Require Azure production token
         run: |
