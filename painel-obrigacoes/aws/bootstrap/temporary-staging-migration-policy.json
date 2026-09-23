@@ -1,0 +1,17 @@
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Sid": "MigrateAndReconcileStagingTableOnly",
+      "Effect": "Allow",
+      "Action": [
+        "dynamodb:DescribeTable",
+        "dynamodb:BatchWriteItem",
+        "dynamodb:Query",
+        "dynamodb:Scan",
+        "dynamodb:UpdateTable"
+      ],
+      "Resource": "arn:aws:dynamodb:sa-east-1:181215701228:table/e3i-staging-painel-obrigacoes"
+    }
+  ]
+}
