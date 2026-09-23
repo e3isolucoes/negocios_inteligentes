@@ -39,8 +39,15 @@ jobs:
           node --check portal-admin/client-tool-auth.js
           node --check portal-admin/patch-client-tool-auth.cjs
           node --check portal-admin/test-client-tool-auth.cjs
+          node --check portal-admin/admin-central.js
+          node --check portal-admin/patch-admin-central.cjs
+          node --check portal-admin/test-admin-central.cjs
+          node --check portal-admin/patch-admin-users.cjs
+          node --check portal-admin/test-admin-users.cjs
           node portal-admin/test-session-probe.cjs
           node portal-admin/test-client-tool-auth.cjs
+          node portal-admin/test-admin-central.cjs
+          node portal-admin/test-admin-users.cjs
 
   deploy:
     needs: validate
