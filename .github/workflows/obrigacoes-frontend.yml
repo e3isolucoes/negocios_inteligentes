@@ -43,16 +43,8 @@ jobs:
       - name: Run platform tests
         run: npm test
 
-      - name: Run migrated Portal/Painel regression tests
-        run: |
-          node --test \
-            painel-obrigacoes/test/accessRoles.test.js \
-            painel-obrigacoes/test/module-registry.test.js \
-            painel-obrigacoes/test/historySnapshot.test.js \
-            painel-obrigacoes/test/premiumShell.test.js \
-            painel-obrigacoes/test/systemAdmin.test.js \
-            painel-obrigacoes/test/toolbar.test.js \
-            painel-obrigacoes/test/designSystem.test.js
+      - name: Run complete migrated Painel regression suite
+        run: node --test painel-obrigacoes/test/*.test.js
 
       - name: Check browser JavaScript syntax
         run: |
