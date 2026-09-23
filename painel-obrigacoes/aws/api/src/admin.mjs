@@ -424,9 +424,10 @@ export class AdminService {
         ],
       }));
 
+      const { PK: _pk, SK: _sk, GSI1PK: _gsi1pk, GSI1SK: _gsi1sk, ...profileResponse } = profile;
       return {
         user: { id: userId, email },
-        profile: publicRecord(profile),
+        profile: profileResponse,
         invitation: 'email',
       };
     } catch (error) {
