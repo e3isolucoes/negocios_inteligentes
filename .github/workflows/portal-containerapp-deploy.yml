@@ -105,11 +105,6 @@ jobs:
             --resource-group "$PORTAL_RESOURCE_GROUP" \
             --query 'properties.latestRevisionName' \
             --output tsv)"
-          LATEST_REVISION_FQDN="$(az containerapp show \
-            --name "$PORTAL_CONTAINER_APP" \
-            --resource-group "$PORTAL_RESOURCE_GROUP" \
-            --query 'properties.latestRevisionFqdn' \
-            --output tsv)"
           LATEST_READY_REVISION="$(az containerapp show \
             --name "$PORTAL_CONTAINER_APP" \
             --resource-group "$PORTAL_RESOURCE_GROUP" \
@@ -123,7 +118,6 @@ jobs:
 
           test -n "$FQDN"
           test -n "$LATEST_REVISION"
-          test -n "$LATEST_REVISION_FQDN"
           test "$DEPLOYED_IMAGE" = "${{ steps.image.outputs.image }}"
 
           for attempt in {1..18}; do
@@ -140,6 +134,13 @@ jobs:
           done
 
           test "$LATEST_READY_REVISION" = "$LATEST_REVISION"
+
+          LATEST_REVISION_FQDN="$(az containerapp show \
+            --name "$PORTAL_CONTAINER_APP" \
+            --resource-group "$PORTAL_RESOURCE_GROUP" \
+            --query 'properties.latestRevisionFqdn' \
+            --output tsv)"
+          test -n "$LATEST_REVISION_FQDN"
 
           echo "fqdn=$FQDN" >> "$GITHUB_OUTPUT"
           echo "latest_revision=$LATEST_REVISION" >> "$GITHUB_OUTPUT"
