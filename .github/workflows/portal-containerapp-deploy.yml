@@ -6,6 +6,10 @@ on:
     paths:
       - 'portal-admin/**'
       - '.github/workflows/portal-containerapp-deploy.yml'
+  pull_request:
+    paths:
+      - 'portal-admin/**'
+      - '.github/workflows/portal-containerapp-deploy.yml'
   workflow_dispatch:
 
 concurrency:
@@ -50,6 +54,7 @@ jobs:
           node portal-admin/test-admin-users.cjs
 
   deploy:
+    if: github.event_name != 'pull_request'
     needs: validate
     runs-on: ubuntu-latest
     environment: portal-test
