@@ -47,3 +47,12 @@ No Microsoft Entra ID, a App Registration/Managed Identity usada pelo GitHub dev
 - Subject: `repo:e3isolucoes/negocios_inteligentes:environment:portal-test`
 
 A identidade precisa ter permissão para executar build no ACR `acre3i431811` e atualizar o Container App `e3i-portal-test` no resource group `rg-e3i-portal-test`.
+
+
+## Ponte de autenticação das ferramentas
+
+`client-tool-auth.js` mantém `/api/client-tools` e `/api/admin/access` no mesmo transporte de autenticação que validou `/api/auth/session`.
+
+Isso evita falso bloqueio de ferramenta quando o Portal autenticou por cookie mas a aplicação tenta reutilizar um bearer antigo. A ponte não concede ferramentas e não altera autorização no servidor; ela apenas preserva corretamente a sessão já autenticada.
+
+O build injeta `/client-tool-auth.js` antes do bundle principal do Portal e valida que o script está presente uma única vez.

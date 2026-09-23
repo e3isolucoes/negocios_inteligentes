@@ -35,7 +35,11 @@ jobs:
         run: |
           node --check portal-admin/patch-session-probe.cjs
           node --check portal-admin/test-session-probe.cjs
+          node --check portal-admin/client-tool-auth.js
+          node --check portal-admin/patch-client-tool-auth.cjs
+          node --check portal-admin/test-client-tool-auth.cjs
           node portal-admin/test-session-probe.cjs
+          node portal-admin/test-client-tool-auth.cjs
 
   deploy:
     needs: validate
