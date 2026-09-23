@@ -1,0 +1,29 @@
+name: Portal Auth Regression
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - 'js/api/auth.js'
+      - 'js/api/portalAuth.js'
+      - 'js/ui/login.js'
+      - 'index.html'
+      - 'test/cognitoSso.test.js'
+      - 'test/portalAuth.test.js'
+      - 'test/portalOnlyAccess.test.js'
+      - '.github/workflows/portal-auth-regression.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  portal-auth:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: '24'
+      - name: Validate Portal authentication paths
+        run: node --test test/cognitoSso.test.js test/portalAuth.test.js test/portalOnlyAccess.test.js
