@@ -33,6 +33,7 @@ jobs:
           node-version: '22'
       - name: Validate portal auth patch
         run: |
+          node --check portal-admin/session-probe-middleware.cjs
           node --check portal-admin/patch-session-probe.cjs
           node --check portal-admin/test-session-probe.cjs
           node --check portal-admin/client-tool-auth.js
@@ -89,7 +90,7 @@ jobs:
             --resource-group "$PORTAL_RESOURCE_GROUP" \
             --image "${{ steps.image.outputs.image }}"
 
-      - name: Verify deployed revision
+      - name: Verify candidate revision
         id: portal
         shell: bash
         run: |
@@ -104,6 +105,11 @@ jobs:
             --resource-group "$PORTAL_RESOURCE_GROUP" \
             --query 'properties.latestRevisionName' \
             --output tsv)"
+          LATEST_READY_REVISION="$(az containerapp show \
+            --name "$PORTAL_CONTAINER_APP" \
+            --resource-group "$PORTAL_RESOURCE_GROUP" \
+            --query 'properties.latestReadyRevisionName' \
+            --output tsv)"
           DEPLOYED_IMAGE="$(az containerapp show \
             --name "$PORTAL_CONTAINER_APP" \
             --resource-group "$PORTAL_RESOURCE_GROUP" \
@@ -111,15 +117,90 @@ jobs:
             --output tsv)"
 
           test -n "$FQDN"
+          test -n "$LATEST_REVISION"
           test "$DEPLOYED_IMAGE" = "${{ steps.image.outputs.image }}"
+
+          for attempt in {1..18}; do
+            LATEST_READY_REVISION="$(az containerapp show \
+              --name "$PORTAL_CONTAINER_APP" \
+              --resource-group "$PORTAL_RESOURCE_GROUP" \
+              --query 'properties.latestReadyRevisionName' \
+              --output tsv)"
+            if [ "$LATEST_READY_REVISION" = "$LATEST_REVISION" ]; then
+              break
+            fi
+            echo "Candidate revision is not ready yet: latest=$LATEST_REVISION ready=$LATEST_READY_REVISION"
+            sleep 10
+          done
+
+          test "$LATEST_READY_REVISION" = "$LATEST_REVISION"
+
+          LATEST_REVISION_FQDN="$(az containerapp show \
+            --name "$PORTAL_CONTAINER_APP" \
+            --resource-group "$PORTAL_RESOURCE_GROUP" \
+            --query 'properties.latestRevisionFqdn' \
+            --output tsv)"
+          test -n "$LATEST_REVISION_FQDN"
 
           echo "fqdn=$FQDN" >> "$GITHUB_OUTPUT"
           echo "latest_revision=$LATEST_REVISION" >> "$GITHUB_OUTPUT"
-          echo "Deployed revision: $LATEST_REVISION"
+          echo "latest_revision_fqdn=$LATEST_REVISION_FQDN" >> "$GITHUB_OUTPUT"
+          echo "Candidate revision: $LATEST_REVISION"
+          echo "Candidate revision FQDN: $LATEST_REVISION_FQDN"
           echo "Deployed image: $DEPLOYED_IMAGE"
-          echo "Container App FQDN: $FQDN"
 
-      - name: Smoke test deployed Container App
+      - name: Smoke test candidate revision directly
+        shell: bash
+        env:
+          REVISION_FQDN: ${{ steps.portal.outputs.latest_revision_fqdn }}
+        run: |
+          set -euo pipefail
+          URL="https://$REVISION_FQDN/api/auth/session"
+
+          for attempt in {1..12}; do
+            status="$(curl -sS -o /tmp/session.json -w '%{http_code}' "$URL" || true)"
+            if [ "$status" = "200" ]; then
+              node -e "const fs=require('fs'); const p=JSON.parse(fs.readFileSync('/tmp/session.json','utf8')); if(p.authenticated!==false || p.user!==null || p.session!==null) process.exit(1)"
+              echo "Candidate revision anonymous-session contract is healthy."
+              exit 0
+            fi
+            echo "Attempt $attempt returned HTTP $status from candidate revision $URL"
+            sleep 10
+          done
+
+          echo "Candidate revision failed before traffic promotion."
+          cat /tmp/session.json || true
+          exit 1
+
+      - name: Promote candidate revision to 100 percent traffic
+        shell: bash
+        env:
+          LATEST_REVISION: ${{ steps.portal.outputs.latest_revision }}
+        run: |
+          set -euo pipefail
+          az containerapp ingress traffic set \
+            --name "$PORTAL_CONTAINER_APP" \
+            --resource-group "$PORTAL_RESOURCE_GROUP" \
+            --revision-weight "$LATEST_REVISION=100" \
+            --output none
+
+          CURRENT_TRAFFIC="$(az containerapp ingress traffic show \
+            --name "$PORTAL_CONTAINER_APP" \
+            --resource-group "$PORTAL_RESOURCE_GROUP" \
+            --output json)"
+          echo "$CURRENT_TRAFFIC"
+
+          node -e '
+            const traffic = JSON.parse(process.argv[1]);
+            const revision = process.env.LATEST_REVISION;
+            const entries = Array.isArray(traffic) ? traffic : (traffic?.traffic || []);
+            const selected = entries.find((item) => item.revisionName === revision || item.latestRevision === true);
+            if (!selected || Number(selected.weight) !== 100) process.exit(1);
+            const otherWeighted = entries.filter((item) => item !== selected && Number(item.weight || 0) > 0);
+            if (otherWeighted.length) process.exit(1);
+          ' "$CURRENT_TRAFFIC"
+
+      - name: Smoke test promoted Container App
         shell: bash
         env:
           PORTAL_FQDN: ${{ steps.portal.outputs.fqdn }}
@@ -128,32 +209,37 @@ jobs:
           URL="https://$PORTAL_FQDN/api/auth/session"
 
           for attempt in {1..12}; do
-            status="$(curl -sS -o /tmp/session.json -w '%{http_code}' "$URL" || true)"
+            status="$(curl -sS -o /tmp/session-promoted.json -w '%{http_code}' "$URL" || true)"
             if [ "$status" = "200" ]; then
-              node -e "const fs=require('fs'); const p=JSON.parse(fs.readFileSync('/tmp/session.json','utf8')); if(p.authenticated!==false) process.exit(1)"
-              echo "Deployed Container App anonymous session probe is healthy."
+              node -e "const fs=require('fs'); const p=JSON.parse(fs.readFileSync('/tmp/session-promoted.json','utf8')); if(p.authenticated!==false || p.user!==null || p.session!==null) process.exit(1)"
+              echo "Promoted Container App anonymous-session contract is healthy."
               exit 0
             fi
-            echo "Attempt $attempt returned HTTP $status from $URL"
+            echo "Attempt $attempt returned HTTP $status from promoted app $URL"
             sleep 10
           done
 
-          echo "Deployed Container App did not expose the corrected anonymous session contract."
-          cat /tmp/session.json || true
+          echo "Promoted Container App failed smoke test."
+          cat /tmp/session-promoted.json || true
           exit 1
 
-      - name: Check public Portal domain routing
+      - name: Smoke test public Portal domain
         shell: bash
-        continue-on-error: true
         run: |
           set -euo pipefail
-          status="$(curl -sS -o /tmp/public-session.json -w '%{http_code}' https://portal.e3isolucoes.com.br/api/auth/session || true)"
-          echo "portal.e3isolucoes.com.br returned HTTP $status"
+          URL="https://portal.e3isolucoes.com.br/api/auth/session"
+
+          for attempt in {1..12}; do
+            status="$(curl -sS -o /tmp/public-session.json -w '%{http_code}' "$URL" || true)"
+            if [ "$status" = "200" ]; then
+              node -e "const fs=require('fs'); const p=JSON.parse(fs.readFileSync('/tmp/public-session.json','utf8')); if(p.authenticated!==false || p.user!==null || p.session!==null) process.exit(1)"
+              echo "Public Portal anonymous-session contract is healthy."
+              exit 0
+            fi
+            echo "Attempt $attempt returned HTTP $status from public Portal"
+            sleep 10
+          done
+
+          echo "Public Portal did not expose the promoted anonymous-session contract."
           cat /tmp/public-session.json || true
-
-          if [ "$status" != "200" ]; then
-            echo "::warning::The public Portal domain is not exposing the same anonymous-session contract as the deployed test Container App. Check custom-domain/DNS/traffic routing."
-            exit 1
-          fi
-
-          node -e "const fs=require('fs'); const p=JSON.parse(fs.readFileSync('/tmp/public-session.json','utf8')); if(p.authenticated!==false) process.exit(1)"
+          exit 1
