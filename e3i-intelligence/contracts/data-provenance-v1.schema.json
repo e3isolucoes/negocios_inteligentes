@@ -1,0 +1,69 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.e3isolucoes.com.br/intelligence/data-provenance-v1.schema.json",
+  "title": "E3I Intelligence Data Provenance v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "sourceType",
+    "collectedAt",
+    "dataClassification",
+    "processingPurposeId",
+    "retentionClass",
+    "containsPersonalData",
+    "containsSensitivePersonalData"
+  ],
+  "properties": {
+    "sourceType": {
+      "type": "string",
+      "enum": [
+        "E3I_TOOL_MEASURED",
+        "USER_DECLARED",
+        "DOCUMENT_EXTRACTED",
+        "CALCULATED",
+        "MODEL_PREDICTED",
+        "AI_INFERRED",
+        "IMPORTED",
+        "API_RECEIVED"
+      ]
+    },
+    "sourceSystem": { "type": "string", "minLength": 1, "maxLength": 120 },
+    "sourceEntityId": { "type": "string", "minLength": 1, "maxLength": 160 },
+    "declaredByActorId": { "type": "string", "minLength": 1, "maxLength": 160 },
+    "collectedAt": { "type": "string", "format": "date-time" },
+    "confidence": { "type": "number", "minimum": 0, "maximum": 1 },
+    "dataClassification": {
+      "type": "string",
+      "enum": ["PUBLIC", "INTERNAL", "CONFIDENTIAL", "PERSONAL_DATA", "SENSITIVE_PERSONAL_DATA", "RESTRICTED"]
+    },
+    "processingPurposeId": { "type": "string", "minLength": 1, "maxLength": 120 },
+    "legalBasisRef": { "type": "string", "minLength": 1, "maxLength": 120 },
+    "retentionClass": {
+      "type": "string",
+      "enum": ["EPHEMERAL_30D", "OPERATIONAL_1Y", "ANALYTICS_2Y", "AUDIT_POLICY", "CUSTOM_POLICY"]
+    },
+    "containsPersonalData": { "type": "boolean" },
+    "containsSensitivePersonalData": { "type": "boolean" },
+    "evidenceRefs": {
+      "type": "array",
+      "maxItems": 100,
+      "uniqueItems": true,
+      "items": { "type": "string", "minLength": 1, "maxLength": 160 }
+    }
+  },
+  "allOf": [
+    {
+      "if": { "properties": { "containsPersonalData": { "const": true } }, "required": ["containsPersonalData"] },
+      "then": { "required": ["legalBasisRef"] }
+    },
+    {
+      "if": { "properties": { "containsSensitivePersonalData": { "const": true } }, "required": ["containsSensitivePersonalData"] },
+      "then": {
+        "properties": {
+          "containsPersonalData": { "const": true },
+          "dataClassification": { "enum": ["SENSITIVE_PERSONAL_DATA", "RESTRICTED"] }
+        }
+      }
+    }
+  ]
+}
