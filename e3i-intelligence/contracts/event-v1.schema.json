@@ -1,0 +1,19 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.e3isolucoes.com.br/intelligence/event-v1.schema.json",
+  "title": "E3I Intelligence Event v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["eventId", "eventVersion", "eventType", "tenantId", "occurredAt", "entityType", "entityId", "provenance"],
+  "properties": {
+    "eventId": { "type": "string", "minLength": 8, "maxLength": 180 },
+    "eventVersion": { "const": 1 },
+    "eventType": { "type": "string", "minLength": 3, "maxLength": 100 },
+    "tenantId": { "type": "string", "minLength": 1, "maxLength": 160 },
+    "occurredAt": { "type": "string", "format": "date-time" },
+    "correlationId": { "type": "string", "minLength": 1, "maxLength": 160 },
+    "entityType": { "type": "string", "minLength": 1, "maxLength": 100 },
+    "entityId": { "type": "string", "minLength": 1, "maxLength": 160 },
+    "provenance": { "$ref": "data-provenance-v1.schema.json" }
+  }
+}

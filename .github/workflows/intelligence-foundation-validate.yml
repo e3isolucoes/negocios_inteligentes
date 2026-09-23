@@ -1,0 +1,45 @@
+name: Intelligence Foundation Validate
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - 'e3i-intelligence/**'
+      - '.github/workflows/intelligence-foundation-validate.yml'
+  push:
+    branches: [main]
+    paths:
+      - 'e3i-intelligence/**'
+      - '.github/workflows/intelligence-foundation-validate.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: e3i-intelligence
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: '22'
+      - name: Validate contracts and non-breaking guardrails
+        run: npm test
+      - name: Confirm no deployment automation exists in the foundation
+        run: |
+          node -e "const m=require('./foundation-manifest.json'); if(m.deployment.automatic!==false) process.exit(1)"
+          test ! -e aws/template.yaml
+      - name: Publish validation summary
+        run: |
+          {
+            echo '### E3I Intelligence Foundation'
+            echo '- Contracts: validated'
+            echo '- Feature default: OFF'
+            echo '- Ingestion default: OFF'
+            echo '- Automatic deploy: disabled'
+            echo '- Existing tools dependency: none'
+          } >> "$GITHUB_STEP_SUMMARY"
