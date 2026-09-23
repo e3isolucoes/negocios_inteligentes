@@ -15,6 +15,7 @@ COPY test-admin-central.cjs /tmp/test-admin-central.cjs
 COPY admin-users-server-snippet.txt /tmp/admin-users-server-snippet.txt
 COPY patch-admin-users.cjs /tmp/patch-admin-users.cjs
 COPY test-admin-users.cjs /tmp/test-admin-users.cjs
+COPY migrate-gra-users.cjs /app/migrate-gra-users.cjs
 
 RUN node /tmp/patch-session-probe.cjs \
  && node /tmp/patch-client-tool-auth.cjs \
@@ -22,6 +23,7 @@ RUN node /tmp/patch-session-probe.cjs \
  && node /tmp/patch-admin-users.cjs \
  && node --check /app/dist/server.cjs \
  && node --check /app/dist/admin-central.js \
+ && node --check /app/migrate-gra-users.cjs \
  && node --check /app/dist/session-probe-middleware.cjs \
  && node --check /app/dist/client-tool-auth.js \
  && E3I_ADMIN_DIR=/app/dist E3I_ADMIN_HTML=/app/private/admin-central.html E3I_ADMIN_PATCH_SCRIPT=/tmp/patch-admin-central.cjs E3I_ADMIN_SNIPPET=/tmp/admin-central-server-snippet.txt node /tmp/test-admin-central.cjs \
@@ -41,4 +43,7 @@ RUN node /tmp/patch-session-probe.cjs \
  && grep -Fq '/api/admin/organizations/:organizationId/users' /app/dist/server.cjs
 
 LABEL e3i.portal.source="e3isolucoes/negocios_inteligentes" \
-      e3i.portal.fix="anonymous-session-probe-v3,client-tool-auth-bridge-v1,admin-central-v1,admin-users-v1"
+      e3i.portal.fix="anonymous-session-probe-v3,client-tool-auth-bridge-v1,admin-central-v1,admin-users-v1,existing-user-reconciliation-v1"
+
+
+CMD ["sh", "-c", "node /app/migrate-gra-users.cjs && exec node /app/dist/server.cjs"]
