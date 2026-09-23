@@ -1,3 +1,5 @@
+import { adaptRecordForRead } from './contract.mjs';
+
 export const TOOL_ID = process.env.TOOL_ID || 'painel-obrigacoes';
 export const APP_ENV = process.env.APP_ENV || 'dev';
 export const SCHEMA_VERSION = 1;
@@ -43,7 +45,7 @@ export function entitySk(entity, id, record = {}) {
 export function publicRecord(item) {
   if (!item) return null;
   const { PK, SK, GSI1PK, GSI1SK, ...record } = item;
-  return record;
+  return adaptRecordForRead(record);
 }
 
 export const allowedEntities = Object.freeze(Object.keys(ENTITY_CONFIG));

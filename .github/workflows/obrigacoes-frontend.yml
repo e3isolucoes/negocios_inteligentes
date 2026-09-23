@@ -40,19 +40,41 @@ jobs:
           test -s painel-obrigacoes/staticwebapp.config.json
           test -s painel-obrigacoes/js/api/awsDataClient.js
 
+      - name: Materialize pinned Supabase browser runtime
+        run: |
+          set -euo pipefail
+          mkdir -p painel-obrigacoes/vendor/supabase-2.112.3
+          curl -fsSL --retry 3 \
+            https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.112.3/dist/umd/supabase.js \
+            -o painel-obrigacoes/vendor/supabase-2.112.3/supabase.js
+          test -s painel-obrigacoes/vendor/supabase-2.112.3/supabase.js
+          grep -Fq 'vendor/supabase-2.112.3/supabase.js' painel-obrigacoes/index.html
+          ! grep -Fq 'cdn.jsdelivr.net/npm/@supabase/supabase-js' painel-obrigacoes/index.html
+
+      - name: Install migrated validation dependencies
+        run: |
+          npm ci --ignore-scripts --prefix painel-obrigacoes
+          npm ci --ignore-scripts --prefix painel-obrigacoes/api
+
       - name: Run platform tests
         run: npm test
 
-      - name: Run migrated Portal/Painel regression tests
+      - name: Run complete migrated Painel regression suite
+        run: node --test painel-obrigacoes/test/*.test.js
+
+      - name: Validate public configuration generator
         run: |
-          node --test \
-            painel-obrigacoes/test/accessRoles.test.js \
-            painel-obrigacoes/test/module-registry.test.js \
-            painel-obrigacoes/test/historySnapshot.test.js \
-            painel-obrigacoes/test/premiumShell.test.js \
-            painel-obrigacoes/test/systemAdmin.test.js \
-            painel-obrigacoes/test/toolbar.test.js \
-            painel-obrigacoes/test/designSystem.test.js
+          node painel-obrigacoes/scripts/write-public-config.mjs
+          test -s painel-obrigacoes/js/config.js
+          grep -Fq "public-ci-placeholder-not-a-secret" painel-obrigacoes/js/config.js
+        env:
+          SUPABASE_URL: https://fsyginnpvonruifetjjs.supabase.co
+          SUPABASE_ANON_KEY: public-ci-placeholder-not-a-secret
+
+      - name: Run governance and AI syntax checks
+        run: |
+          npm run governance --prefix painel-obrigacoes
+          npm run typecheck --prefix painel-obrigacoes
 
       - name: Check browser JavaScript syntax
         run: |
@@ -85,6 +107,15 @@ jobs:
       AZURE_DEPLOY_TOKEN: ${{ secrets.AZURE_STATIC_WEB_APPS_API_TOKEN }}
     steps:
       - uses: actions/checkout@v4
+
+      - name: Materialize pinned Supabase browser runtime
+        run: |
+          set -euo pipefail
+          mkdir -p painel-obrigacoes/vendor/supabase-2.112.3
+          curl -fsSL --retry 3 \
+            https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.112.3/dist/umd/supabase.js \
+            -o painel-obrigacoes/vendor/supabase-2.112.3/supabase.js
+          test -s painel-obrigacoes/vendor/supabase-2.112.3/supabase.js
 
       - name: Require Azure production token
         run: |

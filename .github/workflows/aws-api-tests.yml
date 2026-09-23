@@ -4,6 +4,7 @@ on:
   pull_request:
     paths:
       - 'painel-obrigacoes/aws/api/**'
+      - 'painel-obrigacoes/aws/migration/**'
       - 'painel-obrigacoes/js/**'
       - 'painel-obrigacoes/css/**'
       - 'painel-obrigacoes/aws/template.yaml'
@@ -43,6 +44,14 @@ jobs:
       - name: Run API test suite
         run: npm test
 
+      - name: Install AWS migration dependencies
+        run: corepack pnpm install --frozen-lockfile --ignore-scripts
+        working-directory: painel-obrigacoes/aws/migration
+
+      - name: Run AWS migration regression suite
+        run: corepack pnpm test
+        working-directory: painel-obrigacoes/aws/migration
+
       - name: Run platform registry tests
         run: npm test
         working-directory: .
@@ -56,4 +65,8 @@ jobs:
 
       - name: Validate SAM template
         run: sam validate --lint --template-file template.yaml
+        working-directory: painel-obrigacoes/aws
+
+      - name: Build SAM application
+        run: sam build --template-file template.yaml
         working-directory: painel-obrigacoes/aws

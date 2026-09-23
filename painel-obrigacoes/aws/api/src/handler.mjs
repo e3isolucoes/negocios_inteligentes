@@ -292,3 +292,57 @@ export async function handler(event) {
     return response(status, { error: status < 500 ? error.message : 'Erro interno.', requestId }, event);
   }
 }
+
+export function errorResponse(error, event, requestId) {
+  const upstreamRequestId = error?.$metadata?.requestId;
+  const status = error?.statusCode || (upstreamRequestId ? 502 : 500);
+  const method = event.requestContext?.http?.method || event.httpMethod;
+  const path = event.rawPath || event.path || '/';
+  const code = status === 502 ? 'UPSTREAM_SERVICE_ERROR' : status >= 500 ? 'INTERNAL_ERROR' : 'REQUEST_REJECTED';
+  console.error(JSON.stringify({
+    level: 'error', requestId, method, path, status, code,
+    name: error?.name,
+    upstreamRequestId,
+    upstreamStatus: error?.$metadata?.httpStatusCode,
+    message: status < 500 ? error?.message : 'internal_error',
+  }));
+  return response(status, { error: status < 500 ? error.message : 'Erro interno.', code, requestId }, event);
+}
+
+export async function handleAuthenticatedRequest(event, auth, dependencies = {}) {
+  const requestId = event.requestContext?.requestId;
+  try {
+    const method = event.requestContext?.http?.method || event.httpMethod;
+    const path = (event.rawPath || event.path || '/').replace(/^\/v1\/?/, '');
+    const repositoryDependency = dependencies.repository || repository;
+    const admin = dependencies.adminService || adminService;
+
+    if (method === 'GET' && path === 'admin/workspaces') return response(200, await admin.listWorkspaces(auth, listOptions(event)), event);
+    if (method === 'POST' && path === 'admin/workspaces') return response(201, await admin.createWorkspace(auth, parseBody(event)), event);
+    const workspaceMatch = path.match(/^admin\/workspaces\/([^/]+)$/);
+    if (method === 'PATCH' && workspaceMatch) return response(200, await admin.updateWorkspace(auth, decodeURIComponent(workspaceMatch[1]), parseBody(event)), event);
+    if (method === 'POST' && path === 'admin/users') return response(201, await admin.inviteUser(auth, parseBody(event)), event);
+    const membershipMatch = path.match(/^admin\/users\/([^/]+)\/memberships\/([^/]+)$/);
+    if (method === 'PATCH' && membershipMatch) return response(200, await admin.setMembership(auth, ...membershipMatch.slice(1).map(decodeURIComponent), parseBody(event)), event);
+    if (method === 'DELETE' && membershipMatch) {
+      await admin.removeMembership(auth, ...membershipMatch.slice(1).map(decodeURIComponent));
+      return response(204, {}, event);
+    }
+    if (method === 'GET' && path === 'me') {
+      return response(200, { userId: auth.userId, email: auth.email, workspaceId: auth.workspaceId, role: auth.role, moduleGrants: auth.moduleGrants }, event);
+    }
+
+    const [entity, id] = path.split('/').map(decodeURIComponent);
+    if (method === 'GET' && !id) return response(200, await repositoryDependency.list(auth, entity, listOptions(event)), event);
+    if (method === 'GET' && id) return response(200, await repositoryDependency.get(auth, entity, id), event);
+    if (method === 'POST' && !id) return response(201, await repositoryDependency.create(auth, entity, parseBody(event)), event);
+    if (method === 'PATCH' && id) return response(200, await repositoryDependency.update(auth, entity, id, parseBody(event)), event);
+    if (method === 'DELETE' && id) {
+      const deletion = await repositoryDependency.remove(auth, entity, id);
+      return response(deletion ? 202 : 204, deletion || {}, event);
+    }
+    return response(404, { error: 'Rota não encontrada.', requestId }, event);
+  } catch (error) {
+    return errorResponse(error, event, requestId);
+  }
+}

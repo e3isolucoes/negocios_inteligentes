@@ -1,0 +1,87 @@
+name: Azure Static Web Apps CI/CD
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    types: [opened, synchronize, reopened, closed]
+    branches: [main]
+
+concurrency:
+  # Um merge emite push em main e pull_request:closed quase ao mesmo tempo.
+  # Separar os eventos impede que a limpeza do preview cancele produção.
+  group: azure-static-web-apps-${{ github.event_name }}-${{ github.ref }}-${{ github.event.action || 'push' }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+  pull-requests: write
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: '24'
+          cache: npm
+      - name: Install application dependencies
+        run: npm ci --ignore-scripts
+      - name: Install API dependencies
+        run: npm ci --ignore-scripts
+        working-directory: api
+      - name: Install AWS API test dependencies
+        run: corepack pnpm install --frozen-lockfile --ignore-scripts
+        working-directory: aws/api
+      - name: Install AWS migration test dependencies
+        run: corepack pnpm install --frozen-lockfile --ignore-scripts
+        working-directory: aws/migration
+      - name: Run tests
+        run: npm test
+      - name: Run AWS migration tests
+        run: corepack pnpm test
+        working-directory: aws/migration
+      - name: Check governance controls
+        run: npm run governance
+      - name: Check JavaScript syntax
+        run: npm run typecheck
+      - name: Audit production dependencies
+        run: |
+          npm audit --omit=dev --audit-level=high
+          npm audit --omit=dev --audit-level=high --prefix api
+
+  build_and_deploy:
+    needs: validate
+    if: >-
+      github.repository == 'e3isolucoes/portal-e3i-solucoes' &&
+      (github.event_name == 'push' || github.event.action != 'closed')
+    runs-on: ubuntu-latest
+    environment: ${{ github.event_name == 'push' && 'production' || 'preview' }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          submodules: true
+      - name: Deploy static app and API
+        uses: Azure/static-web-apps-deploy@v1
+        with:
+          azure_static_web_apps_api_token: ${{ secrets.AZURE_STATIC_WEB_APPS_API_TOKEN }}
+          repo_token: ${{ secrets.GITHUB_TOKEN }}
+          action: upload
+          app_location: /
+          api_location: api
+          output_location: ''
+          skip_app_build: true
+
+  close_pull_request:
+    if: >-
+      github.repository == 'e3isolucoes/portal-e3i-solucoes' &&
+      github.event_name == 'pull_request' &&
+      github.event.action == 'closed'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Close preview environment
+        uses: Azure/static-web-apps-deploy@v1
+        with:
+          azure_static_web_apps_api_token: ${{ secrets.AZURE_STATIC_WEB_APPS_API_TOKEN }}
+          action: close

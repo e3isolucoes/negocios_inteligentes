@@ -31,6 +31,15 @@ function showFieldError(message) {
   actions.before(el);
 }
 
+function competenceOffsetOptions(selected = 0) {
+  return Array.from({ length: 37 }, (_, offset) => {
+    const label = offset === 0
+      ? 'Mesmo mês do vencimento'
+      : (offset === 1 ? '1 mês anterior ao vencimento' : `${offset} meses anteriores ao vencimento`);
+    return `<option value="${offset}" ${Number(selected || 0) === offset ? 'selected' : ''}>${label}</option>`;
+  }).join('');
+}
+
 function toggleFreqFieldsRule(freq) {
   document.querySelectorAll('.freq-anual-rule').forEach((el) => el.classList.toggle('hidden', freq !== 'anual'));
   document.querySelectorAll('.freq-trimestral-rule').forEach((el) => el.classList.toggle('hidden', freq !== 'trimestral'));
@@ -51,6 +60,7 @@ export function openRuleModal(editId, { onSaved } = {}) {
     day_of_month: 10,
     month: 1,
     months: [3, 6, 9, 12],
+    competence_offset_months: 0,
     business_day_shift: 'nenhum',
     notes: '',
     checklist_template: [],
@@ -78,6 +88,7 @@ export function openRuleModal(editId, { onSaved } = {}) {
     + `<option value="trimestral" ${rule.frequency === 'trimestral' ? 'selected' : ''}>Trimestral</option>`
     + `<option value="anual" ${rule.frequency === 'anual' ? 'selected' : ''}>Anual</option>`
     + '</select></div>';
+  html += `<div class="field"><label>Competência / período de movimento</label><select id="rCompetenceOffset">${competenceOffsetOptions(rule.competence_offset_months)}</select><small>Ex.: obrigação com movimento de agosto e vencimento em setembro = 1 mês anterior ao vencimento.</small></div>`;
   html += `<div class="field"><label>Como contar o dia do vencimento</label><select id="rDayType">${dayTypeOptions}</select></div>`;
   html += `<div class="field"><label id="rDayLabel">Dia do vencimento</label><input id="rDay" type="number" min="1" max="31" value="${rule.day_of_month || 10}" /></div>`;
   html += `<div class="field freq-anual-rule"><label>Mês</label><select id="rMonth">${monthFullOptions}</select></div>`;
@@ -139,6 +150,7 @@ function readRuleForm() {
   const day_type = document.getElementById('rDayType').value;
   const notes = document.getElementById('rNotes').value.trim();
   const business_day_shift = document.getElementById('rBusinessDayShift').value;
+  const competence_offset_months = Math.max(0, Math.min(36, parseInt(document.getElementById('rCompetenceOffset').value, 10) || 0));
   const day_of_month = Math.max(1, Math.min(31, parseInt(document.getElementById('rDay').value, 10) || 1));
   const checklist_template = document.getElementById('rChecklistTemplate').value
     .split('\n')
@@ -146,7 +158,7 @@ function readRuleForm() {
     .filter(Boolean);
 
   const form = {
-    name, category, frequency, day_type, day_of_month, business_day_shift, notes, checklist_template, month: null, months: null,
+    name, category, frequency, day_type, day_of_month, competence_offset_months, business_day_shift, notes, checklist_template, month: null, months: null,
   };
 
   if (frequency === 'anual') {

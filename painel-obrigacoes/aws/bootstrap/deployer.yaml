@@ -1,0 +1,261 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: Fronteira IAM para deploy do E3I Painel de Obrigacoes em staging
+
+Parameters:
+  AccountId:
+    Type: String
+  GitHubOrganization:
+    Type: String
+    Default: e3isolucoes
+  GitHubOrganizationId:
+    Type: String
+    Default: '272208026'
+  GitHubRepository:
+    Type: String
+    Default: portal-e3i-solucoes
+  GitHubRepositoryId:
+    Type: String
+    Default: '1351772197'
+  GitHubEnvironment:
+    Type: String
+    Default: aws-staging
+
+Resources:
+  StagingDeployerRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: e3i-staging-deployer
+      Description: Deploy temporario e limitado dos recursos E3I em staging
+      MaxSessionDuration: 3600
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              AWS: !Sub arn:${AWS::Partition}:iam::${AccountId}:user/e3i-platform-admin
+            Action: sts:AssumeRole
+          - Sid: GitHubActionsOidc
+            Effect: Allow
+            Principal:
+              Federated: !Sub arn:${AWS::Partition}:iam::${AccountId}:oidc-provider/token.actions.githubusercontent.com
+            Action: sts:AssumeRoleWithWebIdentity
+            Condition:
+              StringEquals:
+                token.actions.githubusercontent.com:aud: sts.amazonaws.com
+                token.actions.githubusercontent.com:sub:
+                  - !Sub repo:${GitHubOrganization}/${GitHubRepository}:environment:${GitHubEnvironment}
+                  - !Sub repo:${GitHubOrganization}@${GitHubOrganizationId}/${GitHubRepository}@${GitHubRepositoryId}:environment:${GitHubEnvironment}
+      Policies:
+        - PolicyName: e3i-staging-deploy
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Sid: CloudFormationStacks
+                Effect: Allow
+                Action:
+                  - cloudformation:CreateChangeSet
+                  - cloudformation:CreateStack
+                  - cloudformation:DeleteChangeSet
+                  - cloudformation:DeleteStack
+                  - cloudformation:DescribeChangeSet
+                  - cloudformation:DescribeStackEvents
+                  - cloudformation:DescribeStackResource
+                  - cloudformation:DescribeStackResources
+                  - cloudformation:DescribeStacks
+                  - cloudformation:ExecuteChangeSet
+                  - cloudformation:GetTemplate
+                  - cloudformation:ListChangeSets
+                  - cloudformation:UpdateStack
+                Resource:
+                  - !Sub arn:${AWS::Partition}:cloudformation:*:${AccountId}:stack/e3i-staging-*/*
+              - Sid: ValidateTemplatesReadOnly
+                Effect: Allow
+                Action:
+                  - cloudformation:GetTemplateSummary
+                  - cloudformation:ValidateTemplate
+                Resource: '*'
+              - Sid: UseAwsServerlessTransform
+                Effect: Allow
+                Action:
+                  - cloudformation:CreateChangeSet
+                Resource: arn:aws:cloudformation:*:aws:transform/Serverless-2016-10-31
+              - Sid: ApplicationResources
+                Effect: Allow
+                Action:
+                  - dynamodb:CreateTable
+                  - dynamodb:DeleteTable
+                  - dynamodb:DescribeTable
+                  - dynamodb:DescribeContinuousBackups
+                  - dynamodb:DescribeTimeToLive
+                  - dynamodb:ListTagsOfResource
+                  - dynamodb:TagResource
+                  - dynamodb:UntagResource
+                  - dynamodb:UpdateContinuousBackups
+                  - dynamodb:UpdateTable
+                  - dynamodb:UpdateTimeToLive
+                  - lambda:AddPermission
+                  - lambda:CreateEventSourceMapping
+                  - lambda:CreateFunction
+                  - lambda:DeleteEventSourceMapping
+                  - lambda:DeleteFunction
+                  - lambda:GetEventSourceMapping
+                  - lambda:GetFunction
+                  - lambda:GetFunctionConfiguration
+                  - lambda:ListTags
+                  - lambda:PutFunctionConcurrency
+                  - lambda:DeleteFunctionConcurrency
+                  - lambda:RemovePermission
+                  - lambda:TagResource
+                  - lambda:UntagResource
+                  - lambda:UpdateEventSourceMapping
+                  - lambda:UpdateFunctionCode
+                  - lambda:UpdateFunctionConfiguration
+                  - logs:CreateLogGroup
+                  - logs:DeleteLogGroup
+                  - logs:DescribeLogGroups
+                  - logs:PutRetentionPolicy
+                  - apigateway:DELETE
+                  - apigateway:GET
+                  - apigateway:PATCH
+                  - apigateway:POST
+                  - apigateway:PUT
+                  - apigateway:TagResource
+                  - apigateway:UntagResource
+                  - xray:GetSamplingRules
+                  - xray:GetSamplingStatisticSummaries
+                  - xray:PutTelemetryRecords
+                  - xray:PutTraceSegments
+                  - cloudwatch:DeleteAlarms
+                  - cloudwatch:DescribeAlarms
+                  - cloudwatch:PutMetricAlarm
+                  - cloudwatch:TagResource
+                  - cloudwatch:UntagResource
+                  - scheduler:CreateSchedule
+                  - scheduler:DeleteSchedule
+                  - scheduler:GetSchedule
+                  - scheduler:ListScheduleGroups
+                  - scheduler:ListSchedules
+                  - scheduler:ListTagsForResource
+                  - scheduler:TagResource
+                  - scheduler:UntagResource
+                  - scheduler:UpdateSchedule
+                  - ses:CreateEmailIdentity
+                  - ses:DeleteEmailIdentity
+                  - ses:GetAccount
+                  - ses:GetEmailIdentity
+                  - ses:ListEmailIdentities
+                  - cognito-idp:CreateUserPool
+                  - cognito-idp:CreateUserPoolClient
+                  - cognito-idp:DeleteUserPool
+                  - cognito-idp:DeleteUserPoolClient
+                  - cognito-idp:DescribeUserPool
+                  - cognito-idp:DescribeUserPoolClient
+                  - cognito-idp:TagResource
+                  - cognito-idp:UntagResource
+                  - cognito-idp:UpdateUserPool
+                  - cognito-idp:UpdateUserPoolClient
+                  - sqs:ListQueues
+                Resource: '*'
+              - Sid: StagingQueues
+                Effect: Allow
+                Action:
+                  - sqs:CreateQueue
+                  - sqs:DeleteQueue
+                  - sqs:GetQueueAttributes
+                  - sqs:GetQueueUrl
+                  - sqs:ListQueueTags
+                  - sqs:SetQueueAttributes
+                  - sqs:TagQueue
+                  - sqs:UntagQueue
+                Resource: !Sub arn:${AWS::Partition}:sqs:*:${AccountId}:e3i-staging-*
+              - Sid: StagingPipes
+                Effect: Allow
+                Action:
+                  - pipes:CreatePipe
+                  - pipes:DeletePipe
+                  - pipes:DescribePipe
+                  - pipes:ListTagsForResource
+                  - pipes:StartPipe
+                  - pipes:StopPipe
+                  - pipes:TagResource
+                  - pipes:UntagResource
+                  - pipes:UpdatePipe
+                Resource: !Sub arn:${AWS::Partition}:pipes:*:${AccountId}:pipe/e3i-staging-*
+              - Sid: E3iBucketInfrastructure
+                Effect: Allow
+                Action:
+                  - s3:CreateBucket
+                  - s3:DeleteBucket
+                  - s3:GetBucketLocation
+                  - s3:GetBucketPolicy
+                  - s3:PutBucketPolicy
+                  - s3:DeleteBucketPolicy
+                  - s3:GetBucketTagging
+                  - s3:PutBucketTagging
+                  - s3:GetBucketEncryption
+                  - s3:PutBucketEncryption
+                  - s3:GetBucketCORS
+                  - s3:PutBucketCORS
+                  - s3:DeleteBucketCORS
+                  - s3:GetBucketVersioning
+                  - s3:PutBucketVersioning
+                  - s3:GetBucketPublicAccessBlock
+                  - s3:PutBucketPublicAccessBlock
+                  - s3:GetLifecycleConfiguration
+                  - s3:PutLifecycleConfiguration
+                  - s3:GetBucketOwnershipControls
+                  - s3:PutBucketOwnershipControls
+                  - s3:DeleteBucketOwnershipControls
+                  - s3:GetBucketNotification
+                  - s3:PutBucketNotification
+                Resource: arn:aws:s3:::e3i-staging-*
+              - Sid: DeploymentArtifactsBucket
+                Effect: Allow
+                Action:
+                  - s3:ListBucket
+                  - s3:GetBucketLocation
+                Resource: !Sub arn:${AWS::Partition}:s3:::e3i-staging-artifacts-${AccountId}
+              - Sid: DeploymentArtifactsObjects
+                Effect: Allow
+                Action:
+                  - s3:GetObject
+                  - s3:PutObject
+                  - s3:DeleteObject
+                Resource: !Sub arn:${AWS::Partition}:s3:::e3i-staging-artifacts-${AccountId}/*
+              - Sid: E3iGeneratedRoles
+                Effect: Allow
+                Action:
+                  - iam:AttachRolePolicy
+                  - iam:CreateRole
+                  - iam:DeleteRole
+                  - iam:DeleteRolePolicy
+                  - iam:DetachRolePolicy
+                  - iam:GetRole
+                  - iam:GetRolePolicy
+                  - iam:ListAttachedRolePolicies
+                  - iam:ListRolePolicies
+                  - iam:ListRoleTags
+                  - iam:PassRole
+                  - iam:PutRolePolicy
+                  - iam:TagRole
+                  - iam:UntagRole
+                  - iam:UpdateAssumeRolePolicy
+                Resource:
+                  - !Sub arn:${AWS::Partition}:iam::${AccountId}:role/e3i-staging-*-api
+                  - !Sub arn:${AWS::Partition}:iam::${AccountId}:role/e3i-staging-*-notifications
+                  - !Sub arn:${AWS::Partition}:iam::${AccountId}:role/e3i-staging-*-notification-scheduler
+                  - !Sub arn:${AWS::Partition}:iam::${AccountId}:role/e3i-staging-painel-obrigacoes-*
+                  - !Sub arn:${AWS::Partition}:iam::${AccountId}:role/e3i-staging-painel-obriga-*
+              - Sid: BudgetGuardrail
+                Effect: Allow
+                Action:
+                  - budgets:CreateBudget
+                  - budgets:DeleteBudget
+                  - budgets:DescribeBudget
+                  - budgets:ModifyBudget
+                  - budgets:ViewBudget
+                Resource: '*'
+
+Outputs:
+  RoleArn:
+    Value: !GetAtt StagingDeployerRole.Arn

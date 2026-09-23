@@ -9,7 +9,26 @@ import { renderSystemAdmin } from '../ui/systemAdmin.js';
 
 const enabledModules = globalThis.E3I_CONFIG?.enabledModules;
 
-export const moduleRegistry = new ModuleRegistry({ enabledModules })
+const MODULE_VIEW_IDS = Object.freeze({
+  obrigacoes: ['board', 'mine'],
+  validacoes: ['validacoes'],
+  dashboard: ['dashboard'],
+  relatorios: ['reports'],
+  administracao: ['manage'],
+  plataforma: ['system-admin'],
+});
+
+export function expandEnabledViewIds(configuredModules) {
+  if (!Array.isArray(configuredModules) || !configuredModules.length) return configuredModules;
+  const viewIds = new Set(['access-denied']);
+  configuredModules.forEach((moduleId) => {
+    const mappedViews = MODULE_VIEW_IDS[moduleId] || [moduleId];
+    mappedViews.forEach((viewId) => viewIds.add(viewId));
+  });
+  return [...viewIds];
+}
+
+export const moduleRegistry = new ModuleRegistry({ enabledModules: expandEnabledViewIds(enabledModules) })
   .register({ id: 'access-denied', label: 'Acesso restrito', order: 999,
     render: () => '<div class="empty" role="alert">Este módulo não está liberado para seu perfil. Solicite a concessão ao administrador da empresa.</div>' })
   .register({ id: 'board', label: 'Painel', order: 10, requiredGrant: 'obrigacoes', render: () => renderBoard() })
@@ -30,5 +49,10 @@ export function resolveView(viewId) {
   const context = currentModuleContext();
   return moduleRegistry.get(viewId, context)
     || moduleRegistry.get('board', context)
-    || moduleRegistry.get('access-denied', context);
+    || moduleRegistry.get('access-denied', context)
+    || Object.freeze({
+      id: 'access-denied',
+      label: 'Acesso restrito',
+      render: () => '<div class="empty" role="alert">Nenhuma área do painel está disponível para este perfil.</div>',
+    });
 }

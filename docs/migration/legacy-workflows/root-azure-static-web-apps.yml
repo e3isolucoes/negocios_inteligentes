@@ -1,0 +1,97 @@
+name: Azure Static Web Apps CI/CD
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    types: [opened, synchronize, reopened]
+    branches: [main]
+
+concurrency:
+  # PRs validam o código; apenas push em main publica produção.
+  group: azure-static-web-apps-${{ github.event_name }}-${{ github.ref }}-${{ github.event.action || 'push' }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+defaults:
+  run:
+    working-directory: painel-obrigacoes
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: '24'
+          cache: npm
+          cache-dependency-path: painel-obrigacoes/package-lock.json
+      - name: Install application dependencies
+        run: npm ci --ignore-scripts
+      - name: Install API dependencies
+        run: npm ci --ignore-scripts
+        working-directory: painel-obrigacoes/api
+      - name: Install AWS API test dependencies
+        run: corepack pnpm install --frozen-lockfile --ignore-scripts
+        working-directory: painel-obrigacoes/aws/api
+      - name: Install AWS migration test dependencies
+        run: corepack pnpm install --frozen-lockfile --ignore-scripts
+        working-directory: painel-obrigacoes/aws/migration
+      - name: Run tests
+        run: npm test
+      - name: Verify public configuration generator
+        run: |
+          node scripts/write-public-config.mjs
+          test -s js/config.js
+          grep -Fq "public-ci-placeholder-not-a-secret" js/config.js
+        env:
+          SUPABASE_URL: https://fsyginnpvonruifetjjs.supabase.co
+          # O teste de segurança primeiro valida a configuração vazia versionada.
+          # Só depois validamos o arquivo que será gerado durante o deploy.
+          SUPABASE_ANON_KEY: public-ci-placeholder-not-a-secret
+      - name: Run AWS migration tests
+        run: corepack pnpm test
+        working-directory: painel-obrigacoes/aws/migration
+      - name: Check governance controls
+        run: npm run governance
+      - name: Check JavaScript syntax
+        run: npm run typecheck
+      - name: Audit production dependencies
+        run: |
+          npm audit --omit=dev --audit-level=high
+          npm audit --omit=dev --audit-level=high --prefix api
+
+  build_and_deploy:
+    needs: validate
+    if: >-
+      github.repository == 'e3isolucoes/portal-e3i-solucoes' &&
+      github.event_name == 'push'
+    runs-on: ubuntu-latest
+    environment: production
+    env:
+      AZURE_DEPLOY_TOKEN: ${{ secrets.AZURE_STATIC_WEB_APPS_API_TOKEN }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          submodules: true
+      - name: Generate public browser configuration
+        run: node scripts/write-public-config.mjs
+        env:
+          SUPABASE_URL: ${{ vars.SUPABASE_URL }}
+          SUPABASE_ANON_KEY: ${{ secrets.SUPABASE_ANON_KEY }}
+      - name: Require Azure production token
+        run: test -n "$AZURE_DEPLOY_TOKEN"
+      - name: Deploy static app and API
+        uses: Azure/static-web-apps-deploy@v1
+        with:
+          azure_static_web_apps_api_token: ${{ env.AZURE_DEPLOY_TOKEN }}
+          repo_token: ${{ secrets.GITHUB_TOKEN }}
+          action: upload
+          app_location: /painel-obrigacoes
+          api_location: painel-obrigacoes/api
+          output_location: ''
+          skip_app_build: true
+

@@ -1,0 +1,2 @@
+import { AIError } from '../errors/AIError.js';
+export class ToolRegistry { constructor(items=[]) { this.items=new Map(items.map(x=>[x.id,x])); } get(id) { const x=this.items.get(id); if(!x) throw new AIError('TOOL_NOT_FOUND',`Tool não encontrado: ${id}`); return x; } listAllowed(permissions=[]) { return [...this.items.values()].filter(x=>x.requiredPermissions.every(p=>permissions.includes(p))); } }
