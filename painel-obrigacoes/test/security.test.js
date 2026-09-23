@@ -6,7 +6,8 @@ test('CSP permits OCR eval while keeping script elements restricted to trusted o
   const config = JSON.parse(await readFile(new URL('../staticwebapp.config.json', import.meta.url), 'utf8'));
   const csp = config.globalHeaders['Content-Security-Policy'];
 
-  assert.match(csp, /script-src[^;]*'unsafe-eval'/);
+  assert.match(csp, /script-src[^;]*'wasm-unsafe-eval'/);
+  assert.doesNotMatch(csp, /script-src[^;]*'unsafe-eval'/);
   assert.match(csp, /script-src-elem 'self' https:\/\/cdn\.jsdelivr\.net/);
   assert.doesNotMatch(csp, /script-src-elem[^;]*'unsafe-(?:eval|inline)'/);
   assert.match(await readFile(new URL('../index.html', import.meta.url), 'utf8'), /vendor\/supabase-2\.112\.3\/supabase\.js/);
@@ -47,6 +48,6 @@ test('admin can complete an activity without a second validator', async () => {
   assert.match(schema, /executor_admin := is_admin\(new\.done_by\)/);
   assert.match(schema, /exigir and not executor_admin then 'aguardando_validacao' else 'validada'/);
   assert.match(schema, /if not exigir or executor_admin then new\.validated_at:=now\(\); new\.validated_by:=new\.done_by/);
-  assert.match(data, /!ob\.validator_id && !isAdmin\(\)/);
-  assert.match(data, /ob\.validator_id === STATE\.session\?\.id && !isAdmin\(\)/);
+  assert.match(data, /const validationRequired = Boolean\(ob\.requires_validation && !isAdmin\(\)\)/);
+  assert.match(data, /const validatorReady = !validationRequired[\s\S]*?ob\.validator_id !== STATE\.session\?\.id/);
 });
