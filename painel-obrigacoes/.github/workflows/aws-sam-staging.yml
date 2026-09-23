@@ -1,0 +1,129 @@
+name: AWS SAM Staging
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'aws/**'
+      - '.github/workflows/aws-sam-staging.yml'
+  workflow_dispatch:
+
+concurrency:
+  group: aws-sam-staging
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+  id-token: write
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: '24'
+          cache: npm
+      - uses: aws-actions/setup-sam@v3
+        with:
+          use-installer: true
+          token: ${{ secrets.GITHUB_TOKEN }}
+      - name: Install application dependencies
+        run: npm ci --ignore-scripts
+      - name: Install Azure API dependencies used by shared tests
+        run: npm ci --ignore-scripts
+        working-directory: api
+      - name: Install AWS API dependencies
+        run: corepack pnpm install --frozen-lockfile --ignore-scripts
+        working-directory: aws/api
+      - name: Install AWS migration dependencies
+        run: corepack pnpm install --frozen-lockfile --ignore-scripts
+        working-directory: aws/migration
+      - name: Run automated checks
+        run: |
+          npm test
+          corepack pnpm --dir aws/migration test
+          npm run governance
+          npm run typecheck
+      - name: Build AWS API bundle
+        run: corepack pnpm --dir aws/api build
+      - name: Validate SAM template
+        run: sam validate --lint --template-file aws/template.yaml
+      - name: Build SAM application
+        run: sam build --template-file aws/template.yaml
+
+  deploy:
+    needs: validate
+    if: github.repository == 'e3isolucoes/portal-e3i-solucoes'
+    runs-on: ubuntu-latest
+    environment: aws-staging
+    steps:
+      - uses: actions/checkout@v7
+      - uses: aws-actions/setup-sam@v3
+        with:
+          use-installer: true
+          token: ${{ secrets.GITHUB_TOKEN }}
+      - name: Authenticate to AWS with GitHub OIDC
+        uses: aws-actions/configure-aws-credentials@v6.2.3
+        with:
+          role-to-assume: ${{ vars.AWS_STAGING_DEPLOY_ROLE_ARN }}
+          role-session-name: github-painel-staging
+          aws-region: sa-east-1
+          allowed-account-ids: '181215701228'
+          unset-current-credentials: true
+      - name: Install and build AWS API
+        run: |
+          corepack pnpm --dir aws/api install --frozen-lockfile --ignore-scripts
+          corepack pnpm --dir aws/api build
+      - name: Build deployment artifact
+        run: sam build --template-file aws/template.yaml
+      - name: Deploy staging stack
+        run: |
+          sam deploy \
+            --stack-name e3i-staging-painel-obrigacoes \
+            --s3-bucket e3i-staging-artifacts-181215701228 \
+            --s3-prefix painel-obrigacoes \
+            --region sa-east-1 \
+            --capabilities CAPABILITY_NAMED_IAM \
+            --no-confirm-changeset \
+            --no-fail-on-empty-changeset \
+            --parameter-overrides \
+              Environment=staging \
+              AllowedOrigin=https://obrigacoes.e3isolucoes.com.br \
+              PortalProvisioningSecret=${{ secrets.PORTAL_PROVISIONING_SECRET }} \
+              NotificationScheduleState=DISABLED
+      - name: Enforce and verify API throttling
+        shell: bash
+        run: |
+          api_id="$(aws cloudformation describe-stack-resource \
+            --stack-name e3i-staging-painel-obrigacoes \
+            --logical-resource-id ServerlessHttpApi \
+            --region sa-east-1 \
+            --query 'StackResourceDetail.PhysicalResourceId' \
+            --output text)"
+          aws apigatewayv2 update-stage \
+            --api-id "$api_id" \
+            --stage-name '$default' \
+            --region sa-east-1 \
+            --default-route-settings ThrottlingRateLimit=2,ThrottlingBurstLimit=5
+          aws apigatewayv2 get-stage \
+            --api-id "$api_id" \
+            --stage-name '$default' \
+            --region sa-east-1 \
+            --query '{rate:DefaultRouteSettings.ThrottlingRateLimit,burst:DefaultRouteSettings.ThrottlingBurstLimit}'
+      - name: Publish deployment summary
+        shell: bash
+        run: |
+          api_url="$(aws cloudformation describe-stacks \
+            --stack-name e3i-staging-painel-obrigacoes \
+            --region sa-east-1 \
+            --query "Stacks[0].Outputs[?OutputKey=='ApiUrl'].OutputValue" \
+            --output text)"
+          {
+            echo '### AWS staging'
+            echo "- Stack: \`e3i-staging-painel-obrigacoes\`"
+            echo "- Region: \`sa-east-1\`"
+            echo "- API: $api_url"
+            echo "- Commit: \`${GITHUB_SHA}\`"
+          } >> "$GITHUB_STEP_SUMMARY"
