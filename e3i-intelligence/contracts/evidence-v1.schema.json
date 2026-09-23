@@ -1,0 +1,22 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.e3isolucoes.com.br/intelligence/evidence-v1.schema.json",
+  "title": "E3I Intelligence Evidence v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["evidenceId", "tenantId", "kind", "storageRef", "createdAt", "provenance"],
+  "properties": {
+    "evidenceId": { "type": "string", "pattern": "^evd-[A-Za-z0-9_-]{8,160}$" },
+    "tenantId": { "type": "string", "minLength": 1, "maxLength": 160 },
+    "kind": {
+      "type": "string",
+      "enum": ["EVENT_REFERENCE", "DOCUMENT_REFERENCE", "USER_STATEMENT", "SYSTEM_RECORD", "CALCULATION", "MODEL_OUTPUT", "OTHER"]
+    },
+    "storageRef": { "type": "string", "minLength": 1, "maxLength": 500 },
+    "sha256": { "type": "string", "pattern": "^[a-fA-F0-9]{64}$" },
+    "contentType": { "type": "string", "minLength": 1, "maxLength": 120 },
+    "createdAt": { "type": "string", "format": "date-time" },
+    "createdByActorId": { "type": "string", "minLength": 1, "maxLength": 160 },
+    "provenance": { "$ref": "data-provenance-v1.schema.json" }
+  }
+}
