@@ -1,0 +1,25 @@
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Sid": "ListOnlyToolStagingPrefix",
+      "Effect": "Allow",
+      "Action": "s3:ListBucket",
+      "Resource": "arn:aws:s3:::e3i-staging-painel-obrigacoes-files-181215701228",
+      "Condition": {
+        "StringLike": {
+          "s3:prefix": "painel-obrigacoes/staging/*"
+        }
+      }
+    },
+    {
+      "Sid": "MigrateOnlyToolStagingObjects",
+      "Effect": "Allow",
+      "Action": [
+        "s3:GetObject",
+        "s3:PutObject"
+      ],
+      "Resource": "arn:aws:s3:::e3i-staging-painel-obrigacoes-files-181215701228/painel-obrigacoes/staging/*"
+    }
+  ]
+}

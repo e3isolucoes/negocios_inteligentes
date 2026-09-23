@@ -1,0 +1,56 @@
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Sid": "AssumeE3iStagingDeployerWithMfa",
+      "Effect": "Allow",
+      "Action": "sts:AssumeRole",
+      "Resource": "arn:aws:iam::181215701228:role/e3i-staging-deployer"
+    },
+    {
+      "Sid": "ReadOwnAccountPasswordPolicy",
+      "Effect": "Allow",
+      "Action": [
+        "iam:GetAccountPasswordPolicy"
+      ],
+      "Resource": "*"
+    },
+    {
+      "Sid": "ChangeOwnPassword",
+      "Effect": "Allow",
+      "Action": [
+        "iam:ChangePassword",
+        "iam:GetUser"
+      ],
+      "Resource": "arn:aws:iam::181215701228:user/e3i-platform-admin"
+    },
+    {
+      "Sid": "CreateOwnVirtualMfa",
+      "Effect": "Allow",
+      "Action": [
+        "iam:CreateVirtualMFADevice",
+        "iam:DeleteVirtualMFADevice"
+      ],
+      "Resource": "arn:aws:iam::181215701228:mfa/Celular_Dooodge"
+    },
+    {
+      "Sid": "ListVirtualMfaDevicesForEnrollment",
+      "Effect": "Allow",
+      "Action": [
+        "iam:ListVirtualMFADevices"
+      ],
+      "Resource": "*"
+    },
+    {
+      "Sid": "ManageOwnMfa",
+      "Effect": "Allow",
+      "Action": [
+        "iam:EnableMFADevice",
+        "iam:DeactivateMFADevice",
+        "iam:ListMFADevices",
+        "iam:ResyncMFADevice"
+      ],
+      "Resource": "arn:aws:iam::181215701228:user/e3i-platform-admin"
+    }
+  ]
+}
