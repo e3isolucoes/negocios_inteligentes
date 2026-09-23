@@ -8,6 +8,7 @@
       "/icons/*",
       "/js/*",
       "/manifest.json",
+      "/vendor/*",
       "/sw.js",
       "/*.{css,ico,jpg,jpeg,js,json,png,svg,webp,woff,woff2}"
     ]
