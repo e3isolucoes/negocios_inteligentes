@@ -40,11 +40,30 @@ jobs:
           test -s painel-obrigacoes/staticwebapp.config.json
           test -s painel-obrigacoes/js/api/awsDataClient.js
 
+      - name: Install migrated validation dependencies
+        run: |
+          npm ci --ignore-scripts --prefix painel-obrigacoes
+          npm ci --ignore-scripts --prefix painel-obrigacoes/api
+
       - name: Run platform tests
         run: npm test
 
       - name: Run complete migrated Painel regression suite
         run: node --test painel-obrigacoes/test/*.test.js
+
+      - name: Validate public configuration generator
+        run: |
+          node painel-obrigacoes/scripts/write-public-config.mjs
+          test -s painel-obrigacoes/js/config.js
+          grep -Fq "public-ci-placeholder-not-a-secret" painel-obrigacoes/js/config.js
+        env:
+          SUPABASE_URL: https://fsyginnpvonruifetjjs.supabase.co
+          SUPABASE_ANON_KEY: public-ci-placeholder-not-a-secret
+
+      - name: Run governance and AI syntax checks
+        run: |
+          npm run governance --prefix painel-obrigacoes
+          npm run typecheck --prefix painel-obrigacoes
 
       - name: Check browser JavaScript syntax
         run: |
