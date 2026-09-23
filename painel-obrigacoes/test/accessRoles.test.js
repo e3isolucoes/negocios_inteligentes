@@ -111,7 +111,9 @@ test('membro ativo pode incluir, editar e excluir atividades/obrigações', asyn
   assert.match(validatorSource, /requires_validation === true/);
   assert.doesNotMatch(validatorSource, /requires_validation !== false/);
   assert.match(dataSource, /requires_validation: formData\.requires_validation === true/);
-  assert.match(checklistSource, /completed: done/);
+  assert.match(checklistSource, /const completed = Boolean\(item\.completed \?\? item\.done\)/);
+  assert.match(checklistSource, /done: completed/);
+  assert.match(checklistSource, /awsData\.update\('checklist_items', itemId, \{ done,/);
   assert.match(contractSource, /entityType === 'checklist_items'[\s\S]*?completed: record\.done/);
 });
 
