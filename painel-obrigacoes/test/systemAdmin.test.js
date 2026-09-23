@@ -91,8 +91,8 @@ test('entrada da aplicação invalida módulos anteriores à tela de super admin
   ]);
   const runtimeVersion = index.match(/js\/runtime-config\.js\?(v=[^\"']+)/)?.[1];
   const appVersion = index.match(/js\/app\.js\?(v=[^\"']+)/)?.[1];
-  const dataVersion = app.match(/data\\.js\\?(v=[^'"]+)/)?.[1];
-  const renderVersion = app.match(/render\\.js\\?(v=[^'"]+)/)?.[1];
+  const dataVersion = app.match(/data\.js\?(v=[^'"]+)/)?.[1];
+  const renderVersion = app.match(/render\.js\?(v=[^'"]+)/)?.[1];
 
   assert.ok(runtimeVersion, 'runtime-config.js deve ter cache-busting');
   assert.ok(appVersion, 'app.js deve ter cache-busting');
