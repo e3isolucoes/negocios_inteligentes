@@ -1,0 +1,13 @@
+{
+  "name": "@e3i/intelligence-foundation",
+  "version": "0.2.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "test": "node scripts/validate-foundation.mjs && node --test test/*.test.mjs",
+    "test:mapping-core": "node --test test/mapping-core.test.mjs"
+  },
+  "engines": {
+    "node": ">=22"
+  }
+}
