@@ -1,0 +1,36 @@
+name: Portal Auth Regression
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - 'painel-obrigacoes/js/api/auth.js'
+      - 'painel-obrigacoes/js/api/portalAuth.js'
+      - 'painel-obrigacoes/js/ui/login.js'
+      - 'painel-obrigacoes/index.html'
+      - 'painel-obrigacoes/test/cognitoSso.test.js'
+      - 'painel-obrigacoes/test/portalAuth.test.js'
+      - 'painel-obrigacoes/test/portalOnlyAccess.test.js'
+      - '.github/workflows/portal-auth-regression.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  portal-auth:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: '24'
+      - name: Create safe test configuration
+        run: node scripts/write-public-config.mjs
+        working-directory: painel-obrigacoes
+        env:
+          SUPABASE_URL: https://fsyginnpvonruifetjjs.supabase.co
+          SUPABASE_ANON_KEY: public-test-key-with-safe-length
+      - name: Validate Portal authentication paths
+        run: node --test test/cognitoSso.test.js test/portalAuth.test.js test/portalOnlyAccess.test.js
+        working-directory: painel-obrigacoes
