@@ -10,7 +10,7 @@ test('CSP permits OCR eval while keeping script elements restricted to trusted o
   assert.doesNotMatch(csp, /script-src[^;]*'unsafe-eval'/);
   assert.match(csp, /script-src-elem 'self' https:\/\/cdn\.jsdelivr\.net/);
   assert.doesNotMatch(csp, /script-src-elem[^;]*'unsafe-(?:eval|inline)'/);
-  assert.match(await readFile(new URL('../index.html', import.meta.url), 'utf8'), /vendor\/supabase-2\.112\.3\/supabase\.js/);
+  assert.match(await readFile(new URL('../index.html', import.meta.url), 'utf8'), /https:\/\/cdn\.jsdelivr\.net\/npm\/@supabase\/supabase-js@/);
   assert.match(csp, /style-src[^;]*https:\/\/fonts\.googleapis\.com/);
   assert.match(csp, /font-src[^;]*https:\/\/fonts\.gstatic\.com/);
   assert.match(csp, /frame-ancestors https:\/\/portal\.e3isolucoes\.com\.br/);
@@ -44,10 +44,13 @@ test('AWS panel keeps a safe public configuration module in the repository', asy
 test('admin can complete an activity without a second validator', async () => {
   const schema = await readFile(new URL('../sql/schema.sql', import.meta.url), 'utf8');
   const data = await readFile(new URL('../js/data.js', import.meta.url), 'utf8');
+  const repository = await readFile(new URL('../aws/api/src/repository.mjs', import.meta.url), 'utf8');
 
   assert.match(schema, /executor_admin := is_admin\(new\.done_by\)/);
   assert.match(schema, /exigir and not executor_admin then 'aguardando_validacao' else 'validada'/);
   assert.match(schema, /if not exigir or executor_admin then new\.validated_at:=now\(\); new\.validated_by:=new\.done_by/);
-  assert.match(data, /!ob\.validator_id && !isAdmin\(\)/);
-  assert.match(data, /ob\.validator_id === STATE\.session\?\.id && !isAdmin\(\)/);
+  assert.match(data, /validationRequired = Boolean\(ob\.requires_validation && !isAdmin\(\)\)/);
+  assert.match(data, /validatorReady = !validationRequired/);
+  assert.match(repository, /requiresValidation = obligation\.requires_validation === true && !\['admin', 'super_admin'\]\.includes\(auth\.role\)/);
+  assert.match(repository, /requiresValidation \? 'aguardando_validacao' : 'validada'/);
 });
