@@ -1,0 +1,12 @@
+node_modules/
+aws/**/node_modules/
+aws/api/dist/
+aws/.aws-sam/
+.aws-sam/
+.env.aws*
+migration-report*.json
+aws-cli-install.log
+.secrets/
+.migration/
+.tools/
+.DS_Store

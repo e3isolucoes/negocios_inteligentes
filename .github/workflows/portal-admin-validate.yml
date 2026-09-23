@@ -1,0 +1,67 @@
+name: Portal Admin Central Validate
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - 'portal-admin/**'
+      - '.github/workflows/portal-admin-validate.yml'
+  push:
+    branches: [main]
+    paths:
+      - 'portal-admin/**'
+      - '.github/workflows/portal-admin-validate.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: '22'
+      - name: Check admin JavaScript syntax
+        run: |
+          node --check portal-admin/admin-central.js
+          node --check portal-admin/patch-admin-central.cjs
+          node --check portal-admin/test-admin-central.cjs
+          node --check portal-admin/patch-admin-users.cjs
+          node --check portal-admin/test-admin-users.cjs
+          node --check portal-admin/first-login.js
+          node --check portal-admin/test-first-login.cjs
+      - name: Validate central admin contracts and patch fixture
+        env:
+          E3I_ADMIN_DIR: ${{ github.workspace }}/portal-admin
+          E3I_ADMIN_PATCH_SCRIPT: ${{ github.workspace }}/portal-admin/patch-admin-central.cjs
+          E3I_ADMIN_SNIPPET: ${{ github.workspace }}/portal-admin/admin-central-server-snippet.txt
+        run: node portal-admin/test-admin-central.cjs
+      - name: Validate user lifecycle security contracts
+        env:
+          E3I_ADMIN_DIR: ${{ github.workspace }}/portal-admin
+          E3I_ADMIN_USERS_PATCH_SCRIPT: ${{ github.workspace }}/portal-admin/patch-admin-users.cjs
+          E3I_ADMIN_USERS_SNIPPET: ${{ github.workspace }}/portal-admin/admin-users-server-snippet.txt
+        run: node portal-admin/test-admin-users.cjs
+      - name: Validate first-login cancel and dialog consistency
+        env:
+          E3I_FIRST_LOGIN_DIR: ${{ github.workspace }}/portal-admin
+        run: node portal-admin/test-first-login.cjs
+      - name: Publish QA summary
+        run: |
+          {
+            echo '### Portal Admin Central v2'
+            echo '- Central admin UI and E3I theme: validated'
+            echo '- Parameter safe defaults: validated'
+            echo '- User lifecycle contracts: validated'
+            echo '- Tenant/admin isolation: validated in fixture tests'
+            echo '- Admin page direct access: protected in backend'
+            echo '- Root-only delegation: validated'
+            echo '- Self-revoke and last-admin protection: validated'
+            echo '- User sessions and forced first-login: validated'
+            echo '- First-login cancel/escape/backdrop behavior: validated'
+            echo '- Legacy access screen: removed'
+            echo '- Automatic deployment: not added'
+          } >> "$GITHUB_STEP_SUMMARY"

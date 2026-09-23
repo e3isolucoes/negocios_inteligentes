@@ -1,5 +1,6 @@
-import { getSankhyaChecklistSuggestions } from './obligationChecklistTemplates.js?v=20260814-sankhya-checklists-v1';
-import { supabase } from './supabaseClient.js';
+import { getSankhyaChecklistSuggestions } from './obligationChecklistTemplates.js?v=20260908-csp-wasm-v2';
+import { getAccessToken } from './api/auth.js';
+import { STATE } from './state.js';
 
 // Rota relativa da Azure Function gerenciada pela mesma Static Web App. O
 // navegador envia apenas os dados operacionais; credenciais da OpenAI ficam nas
@@ -60,25 +61,25 @@ export function localChecklistSuggestions(obligation, obligations = [], checklis
     .slice(0, 20);
 }
 
-async function currentAccessToken() {
-  const { data, error } = await supabase.auth.getSession();
-  if (error) throw error;
-  return data.session?.access_token || null;
-}
-
 export async function suggestChecklist(obligation, obligations, checklistItems, {
   fetchImpl = fetch,
-  accessTokenProvider = currentAccessToken,
+  accessTokenProvider = getAccessToken,
+  workspaceIdProvider = () => STATE.profile?.workspace_id,
 } = {}) {
   const local = localChecklistSuggestions(obligation, obligations, checklistItems);
   try {
     const accessToken = await accessTokenProvider();
-    if (!accessToken) throw new Error('Sessão ausente');
+    if (!accessToken) throw Object.assign(new Error('Sessão ausente'), { authenticationFailure: true, status: 401 });
+    const workspaceId = workspaceIdProvider();
+    if (!workspaceId) throw Object.assign(new Error('Workspace ausente'), { authenticationFailure: true, status: 403 });
     const response = await fetchImpl(CHECKLIST_SUGGESTIONS_API, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${accessToken}` },
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${accessToken}`, 'x-workspace-id': workspaceId },
       body: JSON.stringify({ obligation: { id: obligation.id, name: obligation.name, category: obligation.category, frequency: obligation.frequency } }),
     });
+    if ([401, 403].includes(response.status)) {
+      throw Object.assign(new Error('Sua sessão ou acesso à empresa não é mais válido.'), { authenticationFailure: true, status: response.status });
+    }
     if (!response.ok) throw new Error(`HTTP ${response.status}`);
     const data = await response.json();
     if (!Array.isArray(data.suggestions) || !data.suggestions.length) throw new Error('Resposta vazia');
@@ -96,7 +97,10 @@ export async function suggestChecklist(obligation, obligations, checklistItems, 
     }).slice(0, 20);
 
     return { suggestions, mode: data.mode || 'IA', sources: data.sources || [] };
-  } catch {
+  } catch (error) {
+    // Não apresente sugestões locais como se a chamada autenticada tivesse sido
+    // autorizada. Falhas operacionais/IA ainda degradam de forma segura.
+    if (error?.authenticationFailure || /Sessão ausente|Workspace ausente/.test(error?.message || '')) throw error;
     return { suggestions: local, mode: 'Modelo local', sources: [] };
   }
 }

@@ -1,0 +1,16 @@
+[
+  { "ParameterKey": "Environment", "ParameterValue": "prod" },
+  { "ParameterKey": "ToolId", "ParameterValue": "painel-obrigacoes" },
+  { "ParameterKey": "SupabaseIssuer", "ParameterValue": "https://fsyginnpvonruifetjjs.supabase.co" },
+  { "ParameterKey": "AllowedOrigin", "ParameterValue": "https://obrigacoes.e3isolucoes.com.br" },
+  { "ParameterKey": "PreviewOrigin", "ParameterValue": "https://black-mud-078f1a310-103.centralus.7.azurestaticapps.net" },
+  { "ParameterKey": "BudgetEmail", "ParameterValue": "admin@e3isolucoes.com.br" },
+  { "ParameterKey": "MonthlyBudgetUsd", "ParameterValue": "5" },
+  { "ParameterKey": "TableReadCapacity", "ParameterValue": "20" },
+  { "ParameterKey": "TableWriteCapacity", "ParameterValue": "5" },
+  { "ParameterKey": "NotificationDomain", "ParameterValue": "e3isolucoes.com.br" },
+  { "ParameterKey": "NotificationFromEmail", "ParameterValue": "notificacoes@e3isolucoes.com.br" },
+  { "ParameterKey": "NotificationTestEmail", "ParameterValue": "contato@e3isolucoes.com.br" },
+  { "ParameterKey": "NotificationDaysAhead", "ParameterValue": "5" },
+  { "ParameterKey": "NotificationScheduleState", "ParameterValue": "DISABLED" }
+]
