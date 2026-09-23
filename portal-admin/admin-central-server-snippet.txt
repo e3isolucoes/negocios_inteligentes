@@ -1,0 +1,407 @@
+// E3I_ADMIN_CENTRAL_PATCH_V1
+const e3iAdminCentralFs = require('fs');
+const e3iAdminCentralPath = require('path');
+const E3I_ADMIN_CENTRAL_SETTINGS_FILE = process.env.E3I_ADMIN_SETTINGS_FILE || '/app/data/e3i_admin_settings.json';
+const E3I_ADMIN_CENTRAL_PORTAL_DATA_FILE = process.env.E3I_PORTAL_DATA_FILE || '/app/data/bigquery_dataset.json';
+const E3I_ADMIN_CENTRAL_PRIVATE_HTML = process.env.E3I_ADMIN_CENTRAL_PRIVATE_HTML || '/app/private/admin-central.html';
+const E3I_ADMIN_CENTRAL_ROOT_EMAIL = String(process.env.E3I_ROOT_ADMIN_EMAIL || 'admin@e3isolucoes.com.br').trim().toLowerCase();
+
+const E3I_ADMIN_CENTRAL_DEFAULTS = Object.freeze({
+  intelligence: Object.freeze({
+    enabled: false,
+    ingestionEnabled: false,
+    agentMode: 'DISABLED',
+    requireHumanApproval: true,
+    allowSensitivePersonalData: false,
+    defaultRetentionClass: 'ANALYTICS_2Y',
+    mappingPurposeId: 'process-mapping-v1',
+  }),
+  governance: Object.freeze({
+    auditLevel: 'ENHANCED',
+    savingValidationRequired: true,
+  }),
+});
+
+function e3iAdminCentralClone(value) {
+  return JSON.parse(JSON.stringify(value));
+}
+
+function e3iAdminCentralSafeText(value, maxLength, fallback = '') {
+  const text = String(value ?? fallback).trim();
+  if (!text || text.length > maxLength || /[\u0000-\u001f\u007f]/.test(text)) return null;
+  return text;
+}
+
+function e3iAdminCentralReadJson(file, fallback) {
+  try {
+    const content = e3iAdminCentralFs.readFileSync(file, 'utf8');
+    return JSON.parse(content);
+  } catch (error) {
+    if (error && error.code === 'ENOENT') return e3iAdminCentralClone(fallback);
+    throw error;
+  }
+}
+
+function e3iAdminCentralWriteJsonAtomic(file, value) {
+  const dir = e3iAdminCentralPath.dirname(file);
+  e3iAdminCentralFs.mkdirSync(dir, { recursive: true, mode: 0o700 });
+  const temp = `${file}.${process.pid}.${Date.now()}.tmp`;
+  const backup = `${file}.bak`;
+  const serialized = `${JSON.stringify(value, null, 2)}\n`;
+  let fd;
+  try {
+    fd = e3iAdminCentralFs.openSync(temp, 'w', 0o600);
+    e3iAdminCentralFs.writeFileSync(fd, serialized, 'utf8');
+    e3iAdminCentralFs.fsyncSync(fd);
+    e3iAdminCentralFs.closeSync(fd);
+    fd = undefined;
+    if (e3iAdminCentralFs.existsSync(file)) {
+      e3iAdminCentralFs.copyFileSync(file, backup);
+      try { e3iAdminCentralFs.chmodSync(backup, 0o600); } catch (_) {}
+    }
+    e3iAdminCentralFs.renameSync(temp, file);
+    try { e3iAdminCentralFs.chmodSync(file, 0o600); } catch (_) {}
+  } finally {
+    if (fd !== undefined) {
+      try { e3iAdminCentralFs.closeSync(fd); } catch (_) {}
+    }
+    if (e3iAdminCentralFs.existsSync(temp)) {
+      try { e3iAdminCentralFs.unlinkSync(temp); } catch (_) {}
+    }
+  }
+}
+
+function e3iAdminCentralPortalUsers(dataset) {
+  if (!dataset || typeof dataset !== 'object') return [];
+  if (Array.isArray(dataset.users)) return dataset.users;
+  if (dataset.data && Array.isArray(dataset.data.users)) return dataset.data.users;
+  return [];
+}
+
+function e3iAdminCentralMemberships(dataset) {
+  if (!dataset || typeof dataset !== 'object') return [];
+  const candidates = [dataset.memberships, dataset.organizationMembers, dataset.tenantMemberships, dataset.data?.memberships];
+  return candidates.find(Array.isArray) || [];
+}
+
+function e3iAdminCentralAuthCandidates(authResult) {
+  const user = authResult?.user || authResult?.session?.user || authResult?.principal || {};
+  const ids = [
+    authResult?.userId,
+    authResult?.actorId,
+    user?.id,
+    user?.userId,
+    authResult?.session?.userId,
+  ].filter(Boolean).map(String);
+  const emails = [
+    authResult?.email,
+    user?.email,
+    authResult?.session?.email,
+  ].filter(Boolean).map((value) => String(value).trim().toLowerCase());
+  return { ids, emails, user };
+}
+
+function e3iAdminCentralFindUser(authResult, dataset) {
+  const candidates = e3iAdminCentralAuthCandidates(authResult);
+  return e3iAdminCentralPortalUsers(dataset).find((user) => {
+    const id = String(user?.id || user?.userId || '');
+    const email = String(user?.email || '').trim().toLowerCase();
+    return (id && candidates.ids.includes(id)) || (email && candidates.emails.includes(email));
+  }) || null;
+}
+
+
+function e3iAdminCentralRole(authResult, dataset) {
+  const candidates = e3iAdminCentralAuthCandidates(authResult);
+  const storedUser = e3iAdminCentralFindUser(authResult, dataset);
+  if (candidates.emails.includes(E3I_ADMIN_CENTRAL_ROOT_EMAIL) ||
+      String(storedUser?.email || '').trim().toLowerCase() === E3I_ADMIN_CENTRAL_ROOT_EMAIL) {
+    return 'E3I_ADMIN';
+  }
+  if (!storedUser || String(storedUser?.status || 'ACTIVE').toUpperCase() !== 'ACTIVE') return '';
+  const storedRoles = [storedUser?.role, storedUser?.systemRole, storedUser?.portalRole, ...(Array.isArray(storedUser?.roles) ? storedUser.roles : [])];
+  const delegatedBy = String(storedUser?.adminCentralGrantedBy || '').trim().toLowerCase();
+  return delegatedBy === E3I_ADMIN_CENTRAL_ROOT_EMAIL &&
+    storedRoles.some((role) => String(role || '').toUpperCase() === 'E3I_ADMIN')
+    ? 'E3I_ADMIN'
+    : '';
+}
+function e3iAdminCentralActiveOrganization(authResult, dataset) {
+  const user = authResult?.user || authResult?.session?.user || authResult?.principal || {};
+  const direct = [
+    authResult?.organizationId,
+    authResult?.activeOrganizationId,
+    authResult?.tenantId,
+    authResult?.orgId,
+    authResult?.organization?.id,
+    authResult?.tenant?.id,
+    authResult?.session?.organizationId,
+    authResult?.session?.activeOrganizationId,
+    user?.organizationId,
+    user?.activeOrganizationId,
+  ].find((value) => value !== undefined && value !== null && String(value).trim());
+  if (direct) return String(direct).trim();
+
+  const candidates = e3iAdminCentralAuthCandidates(authResult);
+  const memberships = e3iAdminCentralMemberships(dataset).filter((membership) => {
+    const memberId = String(membership?.userId || membership?.actorId || membership?.memberId || '');
+    const memberEmail = String(membership?.email || '').trim().toLowerCase();
+    const status = String(membership?.status || 'ACTIVE').toUpperCase();
+    const matches = (memberId && candidates.ids.includes(memberId)) || (memberEmail && candidates.emails.includes(memberEmail));
+    return matches && status !== 'INACTIVE' && status !== 'DISABLED';
+  });
+  const organizations = [...new Set(memberships.map((membership) => String(
+    membership?.organizationId || membership?.tenantId || membership?.orgId || '',
+  ).trim()).filter(Boolean))];
+  return organizations.length === 1 ? organizations[0] : '';
+}
+
+function e3iAdminCentralRequireAdmin(req, res) {
+  const authResult = validateSession(req, res);
+  if (!authResult) return null;
+  let dataset = null;
+  try {
+    dataset = e3iAdminCentralReadJson(E3I_ADMIN_CENTRAL_PORTAL_DATA_FILE, {});
+  } catch (_) {
+    dataset = {};
+  }
+  if (e3iAdminCentralRole(authResult, dataset) !== 'E3I_ADMIN') {
+    res.status(403).json({ code: 'ADMIN_REQUIRED', error: 'Acesso administrativo necessário.' });
+    return null;
+  }
+  const activeOrganizationId = e3iAdminCentralActiveOrganization(authResult, dataset);
+  const requestedOrganizationId = String(req.params?.organizationId || '').trim();
+  if (!activeOrganizationId || !requestedOrganizationId || activeOrganizationId !== requestedOrganizationId) {
+    res.status(404).json({ code: 'NOT_FOUND', error: 'Recurso não encontrado.' });
+    return null;
+  }
+  const candidates = e3iAdminCentralAuthCandidates(authResult);
+  const storedUser = e3iAdminCentralFindUser(authResult, dataset);
+  const actorId = String(
+    authResult?.userId || authResult?.actorId || candidates.user?.id || storedUser?.id || storedUser?.userId || 'admin',
+  ).slice(0, 160);
+  const actorEmail = String(authResult?.email || candidates.user?.email || storedUser?.email || '').trim().toLowerCase();
+  return {
+    authResult,
+    organizationId: activeOrganizationId,
+    actorId,
+    actorEmail,
+    isRoot: actorEmail === E3I_ADMIN_CENTRAL_ROOT_EMAIL,
+  };
+}
+
+function e3iAdminCentralValidateSettings(candidate) {
+  if (!candidate || typeof candidate !== 'object' || Array.isArray(candidate)) {
+    throw Object.assign(new Error('Configuração inválida.'), { status: 400, code: 'INVALID_SETTINGS' });
+  }
+  const topKeys = Object.keys(candidate);
+  if (topKeys.some((key) => !['intelligence', 'governance'].includes(key))) {
+    throw Object.assign(new Error('Parâmetro não permitido.'), { status: 400, code: 'UNKNOWN_PARAMETER' });
+  }
+  const intelligence = candidate.intelligence;
+  const governance = candidate.governance;
+  if (!intelligence || typeof intelligence !== 'object' || Array.isArray(intelligence)) {
+    throw Object.assign(new Error('Bloco intelligence é obrigatório.'), { status: 400, code: 'INVALID_SETTINGS' });
+  }
+  if (!governance || typeof governance !== 'object' || Array.isArray(governance)) {
+    throw Object.assign(new Error('Bloco governance é obrigatório.'), { status: 400, code: 'INVALID_SETTINGS' });
+  }
+  const intelligenceKeys = [
+    'enabled',
+    'ingestionEnabled',
+    'agentMode',
+    'requireHumanApproval',
+    'allowSensitivePersonalData',
+    'defaultRetentionClass',
+    'mappingPurposeId',
+  ];
+  const governanceKeys = ['auditLevel', 'savingValidationRequired'];
+  if (Object.keys(intelligence).some((key) => !intelligenceKeys.includes(key)) ||
+      Object.keys(governance).some((key) => !governanceKeys.includes(key))) {
+    throw Object.assign(new Error('Parâmetro não permitido.'), { status: 400, code: 'UNKNOWN_PARAMETER' });
+  }
+  for (const field of ['enabled', 'ingestionEnabled', 'requireHumanApproval', 'allowSensitivePersonalData']) {
+    if (typeof intelligence[field] !== 'boolean') {
+      throw Object.assign(new Error(`Tipo inválido para ${field}.`), { status: 400, code: 'INVALID_PARAMETER_TYPE' });
+    }
+  }
+  if (!['DISABLED', 'READ_ONLY'].includes(intelligence.agentMode)) {
+    throw Object.assign(new Error('agentMode inválido.'), { status: 400, code: 'INVALID_PARAMETER_VALUE' });
+  }
+  if (!['EPHEMERAL_30D', 'OPERATIONAL_1Y', 'ANALYTICS_2Y', 'AUDIT_POLICY', 'CUSTOM_POLICY'].includes(intelligence.defaultRetentionClass)) {
+    throw Object.assign(new Error('defaultRetentionClass inválido.'), { status: 400, code: 'INVALID_PARAMETER_VALUE' });
+  }
+  const purpose = e3iAdminCentralSafeText(intelligence.mappingPurposeId, 120);
+  if (!purpose || purpose.includes('@') || /\d{3}\.\d{3}\.\d{3}/.test(purpose)) {
+    throw Object.assign(new Error('mappingPurposeId inválido.'), { status: 400, code: 'INVALID_PARAMETER_VALUE' });
+  }
+  if (!['STANDARD', 'ENHANCED'].includes(governance.auditLevel)) {
+    throw Object.assign(new Error('auditLevel inválido.'), { status: 400, code: 'INVALID_PARAMETER_VALUE' });
+  }
+  if (typeof governance.savingValidationRequired !== 'boolean') {
+    throw Object.assign(new Error('Tipo inválido para savingValidationRequired.'), { status: 400, code: 'INVALID_PARAMETER_TYPE' });
+  }
+  return {
+    intelligence: {
+      enabled: intelligence.enabled,
+      ingestionEnabled: intelligence.ingestionEnabled,
+      agentMode: intelligence.agentMode,
+      requireHumanApproval: intelligence.requireHumanApproval,
+      allowSensitivePersonalData: intelligence.allowSensitivePersonalData,
+      defaultRetentionClass: intelligence.defaultRetentionClass,
+      mappingPurposeId: purpose,
+    },
+    governance: {
+      auditLevel: governance.auditLevel,
+      savingValidationRequired: governance.savingValidationRequired,
+    },
+  };
+}
+
+function e3iAdminCentralRoot() {
+  const root = e3iAdminCentralReadJson(E3I_ADMIN_CENTRAL_SETTINGS_FILE, { schemaVersion: 1, organizations: {} });
+  if (!root || typeof root !== 'object' || root.schemaVersion !== 1 || !root.organizations || typeof root.organizations !== 'object') {
+    return { schemaVersion: 1, organizations: {} };
+  }
+  return root;
+}
+
+function e3iAdminCentralCurrent(root, organizationId) {
+  const current = root.organizations[organizationId];
+  if (!current || typeof current !== 'object') {
+    return {
+      version: 0,
+      settings: e3iAdminCentralClone(E3I_ADMIN_CENTRAL_DEFAULTS),
+      updatedAt: '',
+      audit: [],
+    };
+  }
+  return {
+    version: Number.isInteger(current.version) && current.version >= 0 ? current.version : 0,
+    settings: e3iAdminCentralValidateSettings(current.settings || e3iAdminCentralClone(E3I_ADMIN_CENTRAL_DEFAULTS)),
+    updatedAt: String(current.updatedAt || ''),
+    audit: Array.isArray(current.audit) ? current.audit.slice(-100) : [],
+  };
+}
+
+function e3iAdminCentralChangedKeys(previous, next) {
+  const keys = [];
+  for (const [group, fields] of Object.entries(next)) {
+    for (const [key, value] of Object.entries(fields)) {
+      if (previous?.[group]?.[key] !== value) keys.push(`${group}.${key}`);
+    }
+  }
+  return keys;
+}
+
+app.get('/api/admin/access', (req, res) => {
+  const authResult = validateSession(req, res);
+  if (!authResult) return;
+  let dataset = {};
+  try { dataset = e3iAdminCentralReadJson(E3I_ADMIN_CENTRAL_PORTAL_DATA_FILE, {}); } catch (_) {}
+  const authorized = e3iAdminCentralRole(authResult, dataset) === 'E3I_ADMIN';
+  const candidates = e3iAdminCentralAuthCandidates(authResult);
+  const storedUser = e3iAdminCentralFindUser(authResult, dataset);
+  const actorEmail = String(authResult?.email || candidates.user?.email || storedUser?.email || '').trim().toLowerCase();
+  res.set('Cache-Control', 'no-store');
+  return res.json({ authorized, isRoot: actorEmail === E3I_ADMIN_CENTRAL_ROOT_EMAIL });
+});
+
+app.get('/admin-central.html', (req, res) => {
+  const authResult = validateSession(req, res);
+  if (!authResult) return;
+  let dataset = {};
+  try { dataset = e3iAdminCentralReadJson(E3I_ADMIN_CENTRAL_PORTAL_DATA_FILE, {}); }
+  catch (_) { return res.status(500).send('Não foi possível validar o acesso administrativo.'); }
+  if (e3iAdminCentralRole(authResult, dataset) !== 'E3I_ADMIN') {
+    return res.status(403).send('Acesso administrativo não autorizado.');
+  }
+  res.set('Cache-Control', 'no-store');
+  return res.sendFile(E3I_ADMIN_CENTRAL_PRIVATE_HTML);
+});
+
+app.get('/api/admin/organizations/:organizationId/central-settings', (req, res) => {
+  try {
+    const principal = e3iAdminCentralRequireAdmin(req, res);
+    if (!principal) return;
+    const root = e3iAdminCentralRoot();
+    const current = e3iAdminCentralCurrent(root, principal.organizationId);
+    res.set('Cache-Control', 'no-store');
+    return res.json({
+      organizationId: principal.organizationId,
+      version: current.version,
+      settings: current.settings,
+      updatedAt: current.updatedAt,
+      audit: current.audit,
+    });
+  } catch (_) {
+    console.error('[admin-central] settings read failed');
+    return res.status(500).json({ code: 'INTERNAL_ERROR', error: 'Não foi possível carregar os parâmetros.' });
+  }
+});
+
+app.put('/api/admin/organizations/:organizationId/central-settings', (req, res) => {
+  try {
+    const principal = e3iAdminCentralRequireAdmin(req, res);
+    if (!principal) return;
+    if (String(req.get('x-e3i-admin-request') || '') !== '1') {
+      return res.status(403).json({ code: 'ADMIN_REQUEST_HEADER_REQUIRED', error: 'Requisição administrativa inválida.' });
+    }
+    const body = req.body;
+    if (!body || typeof body !== 'object' || Array.isArray(body)) {
+      return res.status(400).json({ code: 'INVALID_BODY', error: 'Corpo da requisição inválido.' });
+    }
+    const forbiddenSecurityFields = ['tenantId', 'organizationId', 'actorId', 'userId', 'role', 'roles', 'permissions', 'auth', 'context'];
+    if (forbiddenSecurityFields.some((key) => Object.prototype.hasOwnProperty.call(body, key))) {
+      return res.status(400).json({ code: 'SECURITY_CONTEXT_FORBIDDEN', error: 'Contexto de segurança não pode ser definido pelo cliente.' });
+    }
+    if (!Number.isInteger(body.expectedVersion) || body.expectedVersion < 0) {
+      return res.status(400).json({ code: 'INVALID_VERSION', error: 'Versão esperada inválida.' });
+    }
+    const nextSettings = e3iAdminCentralValidateSettings(body.settings);
+    const root = e3iAdminCentralRoot();
+    const current = e3iAdminCentralCurrent(root, principal.organizationId);
+    if (body.expectedVersion !== current.version) {
+      return res.status(409).json({
+        code: 'VERSION_CONFLICT',
+        error: 'A configuração foi alterada por outra sessão.',
+        currentVersion: current.version,
+      });
+    }
+    const changedKeys = e3iAdminCentralChangedKeys(current.settings, nextSettings);
+    const nextVersion = current.version + 1;
+    const updatedAt = new Date().toISOString();
+    const audit = [
+      ...current.audit,
+      {
+        action: 'CENTRAL_SETTINGS_UPDATED',
+        version: nextVersion,
+        actorId: principal.actorId,
+        changedKeys,
+        occurredAt: updatedAt,
+      },
+    ].slice(-100);
+    root.organizations[principal.organizationId] = {
+      version: nextVersion,
+      settings: nextSettings,
+      updatedAt,
+      updatedByActorId: principal.actorId,
+      audit,
+    };
+    e3iAdminCentralWriteJsonAtomic(E3I_ADMIN_CENTRAL_SETTINGS_FILE, root);
+    res.set('Cache-Control', 'no-store');
+    return res.json({
+      organizationId: principal.organizationId,
+      version: nextVersion,
+      settings: nextSettings,
+      updatedAt,
+      audit,
+    });
+  } catch (error) {
+    const status = Number(error?.status) || 500;
+    const code = status < 500 ? String(error?.code || 'INVALID_SETTINGS') : 'INTERNAL_ERROR';
+    const message = status < 500 ? String(error?.message || 'Configuração inválida.') : 'Não foi possível salvar os parâmetros.';
+    if (status >= 500) console.error('[admin-central] settings write failed');
+    return res.status(status).json({ code, error: message });
+  }
+});
