@@ -3,9 +3,9 @@ import { SUPABASE_URL } from '../config.js';
 
 const config = () => globalThis.E3I_CONFIG || {};
 const usesCognito = () => config().authBackend === 'cognito';
-const storageKey = 'e3i.cognito.session';
 const listeners = new Set();
 let recoveryEmail = '';
+let memorySession = null;
 let browserRefreshPromise = null;
 
 function apiBase() {
@@ -94,8 +94,10 @@ function portalSupabaseSession(tokens) {
   };
 }
 function saveSession(session) {
-  if (session) localStorage.setItem(storageKey, JSON.stringify(session)); else localStorage.removeItem(storageKey);
-  for (const callback of listeners) callback(session ? 'SIGNED_IN' : 'SIGNED_OUT', session);
+  memorySession = session ? { ...session } : null;
+  if (memorySession) delete memorySession.refresh_token;
+  for (const callback of listeners) callback(memorySession ? 'SIGNED_IN' : 'SIGNED_OUT', memorySession);
+  return memorySession;
 }
 async function cognitoCall(target, payload) {
   const response = await fetch(`https://cognito-idp.${config().cognitoRegion}.amazonaws.com/`, { method: 'POST', headers: { 'content-type': 'application/x-amz-json-1.1', 'x-amz-target': `AWSCognitoIdentityProviderService.${target}` }, body: JSON.stringify(payload) });
@@ -202,20 +204,37 @@ export function setSession(tokens) {
   return Promise.resolve({ data: { session }, error: null });
 }
 
-function readStoredSession() {
-  try { return JSON.parse(localStorage.getItem(storageKey)); } catch { return null; }
+function readStoredSession() { return memorySession; }
+
+export async function readPortalSsoResponse(response) {
+  const contentType = String(response.headers?.get?.('content-type') || '').toLowerCase();
+  let body = {};
+  if (contentType.includes('application/json')) {
+    body = (await response.json().catch(() => ({}))) || {};
+  }
+  if (response.ok) return body;
+  const unavailable = [502, 503, 504].includes(response.status);
+  const message = unavailable
+    ? 'O serviço do Painel está temporariamente indisponível. Tente novamente em alguns instantes.'
+    : body.error || 'Código de acesso inválido ou expirado.';
+  throw Object.assign(new Error(message), {
+    status: response.status,
+    requestId: body.requestId || response.headers?.get?.('x-request-id') || null,
+  });
 }
 
 export async function completePortalSso(location = window.location) {
   const params = new URLSearchParams(location.search || '');
   const fragment = new URLSearchParams((location.hash || '').replace(/^#/, ''));
-  const launchCode = fragment.get('portal_sso_code');
+  const launchCode = params.get('portal_sso_code') || fragment.get('portal_sso_code');
   const tokenHash = params.get('portal_sso_token');
   if (!launchCode && !tokenHash) return null;
   const tokenType = params.get('portal_sso_type');
-  params.delete('portal_sso_token'); params.delete('portal_sso_type');
+  params.delete('portal_sso_code'); params.delete('portal_sso_token'); params.delete('portal_sso_type');
+  fragment.delete('portal_sso_code');
   const query = params.toString();
-  const cleanUrl = `${location.pathname}${query ? `?${query}` : ''}`;
+  const remainingFragment = fragment.toString();
+  const cleanUrl = `${location.pathname}${query ? `?${query}` : ''}${remainingFragment ? `#${remainingFragment}` : ''}`;
   window.history.replaceState({}, document.title, cleanUrl);
 
   if (launchCode) {
@@ -224,8 +243,7 @@ export async function completePortalSso(location = window.location) {
       method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ code: launchCode }),
       credentials: 'include', cache: 'no-store',
     });
-    const tokens = await response.json().catch(() => ({}));
-    if (!response.ok) throw new Error(tokens.error || 'Código de acesso inválido ou expirado.');
+    const tokens = await readPortalSsoResponse(response);
     const restored = await setSession(tokens);
     if (restored.error || !restored.data.session) throw restored.error || new Error('Sessão AWS não foi criada.');
     return restored.data.session;
