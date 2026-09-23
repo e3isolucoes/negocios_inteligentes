@@ -110,7 +110,7 @@ export class Repository {
   async create(auth, entity, input) {
     const config = entityConfig(entity);
     requireModuleGrant(auth, config.writeGrant || config.grant);
-    requireRole(auth, config.write);
+    requireRole(auth, config.create || config.write);
     const id = input.id || randomUUID();
     const timestamp = now();
     const entityDefaults = entity === 'completions'
