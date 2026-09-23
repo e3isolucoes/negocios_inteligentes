@@ -10,6 +10,7 @@ on:
 
 permissions:
   contents: read
+  id-token: write
 
 concurrency:
   group: aws-staging
@@ -41,6 +42,25 @@ jobs:
       - name: Use AWS SAM CLI
         uses: aws-actions/setup-sam@v2
 
+      - name: Authenticate to AWS with GitHub OIDC
+        if: vars.AWS_STAGING_DEPLOY_ROLE_ARN != ''
+        uses: aws-actions/configure-aws-credentials@v6.2.3
+        with:
+          role-to-assume: ${{ vars.AWS_STAGING_DEPLOY_ROLE_ARN }}
+          role-session-name: github-painel-staging
+          aws-region: ${{ env.AWS_REGION }}
+          allowed-account-ids: '181215701228'
+          unset-current-credentials: true
+
+      - name: Authenticate to AWS with static fallback
+        if: vars.AWS_STAGING_DEPLOY_ROLE_ARN == ''
+        uses: aws-actions/configure-aws-credentials@v6.2.3
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-session-token: ${{ secrets.AWS_SESSION_TOKEN }}
+          aws-region: ${{ env.AWS_REGION }}
+
       - name: Install dependencies
         run: npm install --no-audit --no-fund
 
@@ -59,10 +79,6 @@ jobs:
         working-directory: painel-obrigacoes/aws
 
       - name: Diagnose AWS credential shape
-        env:
-          AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
-          AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-          AWS_SESSION_TOKEN: ${{ secrets.AWS_SESSION_TOKEN }}
         run: |
           set -euo pipefail
 
@@ -92,18 +108,10 @@ jobs:
         working-directory: .
 
       - name: Verify AWS credentials
-        env:
-          AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
-          AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-          AWS_SESSION_TOKEN: ${{ secrets.AWS_SESSION_TOKEN }}
         run: aws sts get-caller-identity
         working-directory: .
 
       - name: Verify existing staging stack identity
-        env:
-          AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
-          AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-          AWS_SESSION_TOKEN: ${{ secrets.AWS_SESSION_TOKEN }}
         run: |
           set -euo pipefail
 
@@ -154,10 +162,6 @@ jobs:
         working-directory: .
 
       - name: Recover interrupted CloudFormation rollback
-        env:
-          AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
-          AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-          AWS_SESSION_TOKEN: ${{ secrets.AWS_SESSION_TOKEN }}
         run: |
           set -euo pipefail
 
@@ -215,10 +219,6 @@ jobs:
         working-directory: .
 
       - name: Prepare staged compatibility templates
-        env:
-          AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
-          AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-          AWS_SESSION_TOKEN: ${{ secrets.AWS_SESSION_TOKEN }}
         run: |
           set -euo pipefail
 
@@ -488,10 +488,6 @@ jobs:
         working-directory: painel-obrigacoes/aws
 
       - name: Ensure staging DynamoDB indexes
-        env:
-          AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
-          AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-          AWS_SESSION_TOKEN: ${{ secrets.AWS_SESSION_TOKEN }}
         run: |
           set -euo pipefail
 
@@ -561,10 +557,6 @@ jobs:
         working-directory: .
 
       - name: Verify staging DynamoDB indexes
-        env:
-          AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
-          AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-          AWS_SESSION_TOKEN: ${{ secrets.AWS_SESSION_TOKEN }}
         run: |
           set -euo pipefail
           TABLE_NAME="$(aws cloudformation describe-stacks \
@@ -590,10 +582,6 @@ jobs:
       - name: Create guarded final staging change set
         id: full_stack_deploy
         continue-on-error: true
-        env:
-          AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
-          AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-          AWS_SESSION_TOKEN: ${{ secrets.AWS_SESSION_TOKEN }}
         run: |
           set -euo pipefail
 
@@ -717,10 +705,6 @@ jobs:
 
       - name: Diagnose full stack rollback
         if: steps.full_stack_deploy.outcome == 'failure'
-        env:
-          AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
-          AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-          AWS_SESSION_TOKEN: ${{ secrets.AWS_SESSION_TOKEN }}
         run: |
           set -euo pipefail
           echo "::warning::O deploy completo do stack falhou e sofreu rollback. A correção operacional da API será aplicada de forma isolada."
@@ -741,10 +725,6 @@ jobs:
 
       - name: Apply isolated API and CORS hotfix
         if: steps.full_stack_deploy.outcome == 'failure'
-        env:
-          AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
-          AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-          AWS_SESSION_TOKEN: ${{ secrets.AWS_SESSION_TOKEN }}
         run: |
           set -euo pipefail
 
@@ -826,10 +806,6 @@ jobs:
 
       - name: Verify stack update
         if: steps.full_stack_deploy.outcome == 'success'
-        env:
-          AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
-          AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-          AWS_SESSION_TOKEN: ${{ secrets.AWS_SESSION_TOKEN }}
         run: |
           set -euo pipefail
 
