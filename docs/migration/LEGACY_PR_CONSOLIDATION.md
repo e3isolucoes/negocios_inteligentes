@@ -87,3 +87,22 @@ Este documento registra a consolidação de todos os PRs que constam como **merg
 | #84 | Redesign Painel de Obrigações com shell premium | Migrado, incorporado por versão canônica mais nova ou coberto pela suíte histórica restaurada. |
 | #85 | Preserve immutable Cognito schema during AWS staging updates | Contrato `active_workspace_id` preservado com teste compatível com PreTokenGeneration/entitlements atuais. |
 | #86 | Padronizar visual de toda a ferramenta com design system único | Migrado, incorporado por versão canônica mais nova ou coberto pela suíte histórica restaurada. |
+
+
+## Cobertura final
+
+A auditoria final identificou **66 PRs mesclados** no repositório histórico.
+
+A consolidação cobre:
+- código e testes ainda válidos no caminho canônico;
+- migrations SQL e AWS;
+- bootstrap e políticas históricas de infraestrutura;
+- assets de ícones e OCR/Tesseract;
+- documentação, ADRs, governança e runbooks;
+- E3I Intelligence e fundação de IA;
+- fluxos de autenticação, SSO, primeiro acesso, Administração Central e autorização;
+- histórico de alterações operacionais e regressões do Painel.
+
+Os workflows antigos foram preservados em `docs/migration/legacy-workflows/` para rastreabilidade, mas **não** foram reativados em `.github/workflows/`, pois isso duplicaria deploys e poderia publicar por caminhos obsoletos. Seus efeitos foram traduzidos para os workflows canônicos atuais.
+
+O teste histórico Cognito que exigia ausência de `PreTokenGeneration` / lifecycle foi preservado em `docs/migration/legacy-tests/`. O gate ativo equivalente é `cognito-schema-current-compat.test.mjs`, que preserva `active_workspace_id` sem remover a arquitetura de entitlements atual.
