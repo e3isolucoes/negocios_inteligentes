@@ -91,14 +91,16 @@ test('entrada da aplicação invalida módulos anteriores à tela de super admin
   ]);
   const runtimeVersion = index.match(/js\/runtime-config\.js\?(v=[^\"']+)/)?.[1];
   const appVersion = index.match(/js\/app\.js\?(v=[^\"']+)/)?.[1];
-  const moduleVersion = 'v=20260919-design-system-v2';
+  const dataVersion = app.match(/data\\.js\\?(v=[^'"]+)/)?.[1];
+  const renderVersion = app.match(/render\\.js\\?(v=[^'"]+)/)?.[1];
 
   assert.ok(runtimeVersion, 'runtime-config.js deve ter cache-busting');
   assert.ok(appVersion, 'app.js deve ter cache-busting');
   assert.equal(appVersion, runtimeVersion, 'runtime-config.js e app.js devem invalidar o cache juntos');
-  assert.match(app, new RegExp(`data\\.js\\?${moduleVersion}`));
-  assert.match(app, new RegExp(`render\\.js\\?${moduleVersion}`));
-  assert.match(render, new RegExp(`data\\.js\\?${moduleVersion}`));
+  assert.ok(dataVersion, 'data.js deve ter cache-busting');
+  assert.ok(renderVersion, 'render.js deve ter cache-busting');
+  assert.equal(dataVersion, renderVersion, 'módulos principais devem invalidar o cache juntos');
+  assert.match(render, new RegExp(`data\\.js\\?${dataVersion}`));
 });
 
 test('troca de papel espera a seleção efetiva em vez de reagir ao click que abre o combo', async () => {
