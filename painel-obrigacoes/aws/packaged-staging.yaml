@@ -1,0 +1,266 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Transform: AWS::Serverless-2016-10-31
+Description: Backend multiempresa do E3I Painel de Obrigacoes
+Parameters:
+  Environment:
+    Type: String
+    Default: prod
+    AllowedValues:
+    - dev
+    - staging
+    - prod
+  ToolId:
+    Type: String
+    Default: painel-obrigacoes
+  SupabaseIssuer:
+    Type: String
+    Description: URL do emissor JWT do projeto Supabase, sem barra final
+  AllowedOrigin:
+    Type: String
+    Default: https://portal.e3isolucoes.com.br
+  BudgetEmail:
+    Type: String
+    Default: admin@e3isolucoes.com.br
+  MonthlyBudgetUsd:
+    Type: Number
+    Default: 5
+Globals:
+  Function:
+    Runtime: nodejs22.x
+    Architectures:
+    - arm64
+    MemorySize: 256
+    Timeout: 15
+    Tracing: Active
+    Environment:
+      Variables:
+        TABLE_NAME:
+          Ref: DataTable
+        FILES_BUCKET:
+          Ref: FilesBucket
+        APP_ENV:
+          Ref: Environment
+        TOOL_ID:
+          Ref: ToolId
+        SUPABASE_ISSUER:
+          Ref: SupabaseIssuer
+        ALLOWED_ORIGIN:
+          Ref: AllowedOrigin
+Resources:
+  DataTable:
+    Type: AWS::DynamoDB::Table
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
+    Properties:
+      TableName:
+        Fn::Sub: e3i-${Environment}-${ToolId}
+      BillingMode: PROVISIONED
+      ProvisionedThroughput:
+        ReadCapacityUnits: 1
+        WriteCapacityUnits: 1
+      AttributeDefinitions:
+      - AttributeName: PK
+        AttributeType: S
+      - AttributeName: SK
+        AttributeType: S
+      - AttributeName: GSI1PK
+        AttributeType: S
+      - AttributeName: GSI1SK
+        AttributeType: S
+      KeySchema:
+      - AttributeName: PK
+        KeyType: HASH
+      - AttributeName: SK
+        KeyType: RANGE
+      GlobalSecondaryIndexes:
+      - IndexName: GSI1
+        KeySchema:
+        - AttributeName: GSI1PK
+          KeyType: HASH
+        - AttributeName: GSI1SK
+          KeyType: RANGE
+        Projection:
+          ProjectionType: ALL
+        ProvisionedThroughput:
+          ReadCapacityUnits: 1
+          WriteCapacityUnits: 1
+      PointInTimeRecoverySpecification:
+        PointInTimeRecoveryEnabled: false
+      SSESpecification:
+        SSEEnabled: true
+      Tags:
+      - Key: e3i:tool
+        Value:
+          Ref: ToolId
+      - Key: e3i:environment
+        Value:
+          Ref: Environment
+      - Key: e3i:data-classification
+        Value: confidential
+  FilesBucket:
+    Type: AWS::S3::Bucket
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
+    Properties:
+      BucketName:
+        Fn::Sub: e3i-${Environment}-${ToolId}-files-${AWS::AccountId}
+      BucketEncryption:
+        ServerSideEncryptionConfiguration:
+        - ServerSideEncryptionByDefault:
+            SSEAlgorithm: AES256
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        BlockPublicPolicy: true
+        IgnorePublicAcls: true
+        RestrictPublicBuckets: true
+      VersioningConfiguration:
+        Status: Enabled
+      LifecycleConfiguration:
+        Rules:
+        - Id: abort-incomplete-uploads
+          Status: Enabled
+          AbortIncompleteMultipartUpload:
+            DaysAfterInitiation: 7
+        - Id: expire-old-versions
+          Status: Enabled
+          NoncurrentVersionExpiration:
+            NoncurrentDays: 90
+      CorsConfiguration:
+        CorsRules:
+        - AllowedOrigins:
+          - Ref: AllowedOrigin
+          AllowedMethods:
+          - GET
+          - PUT
+          AllowedHeaders:
+          - content-type
+          ExposedHeaders:
+          - ETag
+          MaxAge: 300
+      Tags:
+      - Key: e3i:tool
+        Value:
+          Ref: ToolId
+      - Key: e3i:environment
+        Value:
+          Ref: Environment
+  ApiFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      CodeUri:
+        s3://e3i-staging-artifacts-181215701228/painel-obrigacoes/82afe6698187be799d2f7b5f627bddbf
+      Handler: handler.handler
+      FunctionName:
+        Fn::Sub: e3i-${Environment}-${ToolId}-api
+      Role:
+        Fn::GetAtt:
+        - ApiExecutionRole
+        - Arn
+      Events:
+        Proxy:
+          Type: HttpApi
+          Properties:
+            ApiId:
+              Ref: ServerlessHttpApi
+            Path: /{proxy+}
+            Method: ANY
+  ServerlessHttpApi:
+    Type: AWS::Serverless::HttpApi
+    Properties:
+      StageName: $default
+      DefaultRouteSettings:
+        ThrottlingBurstLimit: 5
+        ThrottlingRateLimit: 2
+  ApiExecutionRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName:
+        Fn::Sub: e3i-${Environment}-${ToolId}-api
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+        - Effect: Allow
+          Principal:
+            Service: lambda.amazonaws.com
+          Action: sts:AssumeRole
+      Policies:
+      - PolicyName: data-and-files
+        PolicyDocument:
+          Version: '2012-10-17'
+          Statement:
+          - Effect: Allow
+            Action:
+            - dynamodb:BatchGetItem
+            - dynamodb:BatchWriteItem
+            - dynamodb:DeleteItem
+            - dynamodb:DescribeTable
+            - dynamodb:GetItem
+            - dynamodb:PutItem
+            - dynamodb:Query
+            - dynamodb:TransactGetItems
+            - dynamodb:TransactWriteItems
+            - dynamodb:UpdateItem
+            Resource:
+            - Fn::GetAtt:
+              - DataTable
+              - Arn
+            - Fn::Sub: ${DataTable.Arn}/index/*
+          - Effect: Allow
+            Action:
+            - s3:GetObject
+            - s3:PutObject
+            - s3:DeleteObject
+            Resource:
+              Fn::Sub: ${FilesBucket.Arn}/*
+          - Effect: Allow
+            Action:
+            - logs:CreateLogStream
+            - logs:PutLogEvents
+            Resource:
+              Fn::Sub:
+                arn:${AWS::Partition}:logs:${AWS::Region}:${AWS::AccountId}:log-group:/aws/lambda/e3i-${Environment}-${ToolId}-api:*
+          - Effect: Allow
+            Action:
+            - xray:PutTelemetryRecords
+            - xray:PutTraceSegments
+            Resource: '*'
+  ApiLogGroup:
+    Type: AWS::Logs::LogGroup
+    DeletionPolicy: Retain
+    Properties:
+      LogGroupName:
+        Fn::Sub: /aws/lambda/${ApiFunction}
+      RetentionInDays: 30
+  MonthlyBudget:
+    Type: AWS::Budgets::Budget
+    Properties:
+      Budget:
+        BudgetLimit:
+          Amount:
+            Ref: MonthlyBudgetUsd
+          Unit: USD
+        BudgetName:
+          Fn::Sub: e3i-${Environment}-${ToolId}
+        BudgetType: COST
+        TimeUnit: MONTHLY
+      NotificationsWithSubscribers:
+      - Notification:
+          ComparisonOperator: GREATER_THAN
+          NotificationType: FORECASTED
+          Threshold: 80
+          ThresholdType: PERCENTAGE
+        Subscribers:
+        - Address:
+            Ref: BudgetEmail
+          SubscriptionType: EMAIL
+Outputs:
+  ApiUrl:
+    Value:
+      Fn::Sub:
+        https://${ServerlessHttpApi}.execute-api.${AWS::Region}.${AWS::URLSuffix}
+  TableName:
+    Value:
+      Ref: DataTable
+  FilesBucketName:
+    Value:
+      Ref: FilesBucket
