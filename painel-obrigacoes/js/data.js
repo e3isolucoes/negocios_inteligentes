@@ -151,8 +151,17 @@ export async function refreshObligationsAndCompletions() {
 export async function doMarkDone(obligationId, onDone) {
   const ob = STATE.obligations.find((o) => o.id === obligationId);
   if (!ob) return;
-  // Requisitos de validação são exibidos dentro do painel de prontidão.
-  // Assim a pessoa sempre entende o bloqueio e quem precisa agir.
+  // Administradores podem concluir o próprio envio diretamente. Para os
+  // demais perfis, o validador precisa existir e ser uma pessoa diferente
+  // do executor; o backend reforça a mesma regra.
+  if (ob.requires_validation && !ob.validator_id && !isAdmin()) {
+    showToast('A Gestão precisa definir quem validará esta tarefa antes do envio.', 'error');
+    return;
+  }
+  if (ob.requires_validation && ob.validator_id === STATE.session?.id && !isAdmin()) {
+    showToast('Quem executa a tarefa não pode validar o próprio trabalho.', 'error');
+    return;
+  }
   const completionsByObligation = new Map(
     STATE.completions
       .filter((c) => c.obligation_id === obligationId)
