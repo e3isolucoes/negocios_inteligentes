@@ -6,7 +6,8 @@ test('CSP permits OCR eval while keeping script elements restricted to trusted o
   const config = JSON.parse(await readFile(new URL('../staticwebapp.config.json', import.meta.url), 'utf8'));
   const csp = config.globalHeaders['Content-Security-Policy'];
 
-  assert.match(csp, /script-src[^;]*'unsafe-eval'/);
+  assert.match(csp, /script-src[^;]*'wasm-unsafe-eval'/);
+  assert.doesNotMatch(csp, /script-src[^;]*'unsafe-eval'/);
   assert.match(csp, /script-src-elem 'self' https:\/\/cdn\.jsdelivr\.net/);
   assert.doesNotMatch(csp, /script-src-elem[^;]*'unsafe-(?:eval|inline)'/);
   assert.match(await readFile(new URL('../index.html', import.meta.url), 'utf8'), /vendor\/supabase-2\.112\.3\/supabase\.js/);
