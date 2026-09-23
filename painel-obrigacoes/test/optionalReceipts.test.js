@@ -19,8 +19,8 @@ test('completion flow only uploads and requires a file when configured', async (
 
   assert.match(data, /requiresAttachment: ob\.requires_attachment !== false/);
   assert.match(data, /if \(result\.file\) \{[\s\S]*?uploadAttachment/);
-  assert.match(dialog, /hasFile \|\| !effectiveRequirement/);
-  assert.match(dialog, /effectiveRequirement && !file/);
+  assert.match(dialog, /const attachmentReady = hasFile \|\| !effectiveRequirement/);
+  assert.match(dialog, /if \(!attachmentReady\) blockers\.push\('Anexe o comprovante obrigatório\.'\)/);
   assert.match(dialog, /Comprovante \(\$\{effectiveRequirement \? 'obrigatório' : 'opcional'\}\)/);
   assert.match(dialog, /ocrConfirmCheckbox\.addEventListener\('change', updateEnabled\);[\s\S]*?updateEnabled\(\);\s*fileInput\.addEventListener/);
 });
