@@ -89,10 +89,19 @@ test('entrada da aplicação invalida módulos anteriores à tela de super admin
     readFile(new URL('../js/app.js', import.meta.url), 'utf8'),
     readFile(new URL('../js/render.js', import.meta.url), 'utf8'),
   ]);
-  const runtimeVersion = index.match(/js\/runtime-config\.js\?(v=[^\"']+)/)?.[1];
-  const appVersion = index.match(/js\/app\.js\?(v=[^\"']+)/)?.[1];
-  const dataVersion = app.match(/data\.js\?(v=[^'"]+)/)?.[1];
-  const renderVersion = app.match(/render\.js\?(v=[^'"]+)/)?.[1];
+  function importVersion(source, asset) {
+    const marker = `${asset}?`;
+    const start = source.indexOf(marker);
+    if (start < 0) return '';
+    const tail = source.slice(start + marker.length);
+    const end = tail.search(/['"]/);
+    return end < 0 ? tail : tail.slice(0, end);
+  }
+
+  const runtimeVersion = importVersion(index, 'js/runtime-config.js');
+  const appVersion = importVersion(index, 'js/app.js');
+  const dataVersion = importVersion(app, 'data.js');
+  const renderVersion = importVersion(app, 'render.js');
 
   assert.ok(runtimeVersion, 'runtime-config.js deve ter cache-busting');
   assert.ok(appVersion, 'app.js deve ter cache-busting');
@@ -100,7 +109,7 @@ test('entrada da aplicação invalida módulos anteriores à tela de super admin
   assert.ok(dataVersion, 'data.js deve ter cache-busting');
   assert.ok(renderVersion, 'render.js deve ter cache-busting');
   assert.equal(dataVersion, renderVersion, 'módulos principais devem invalidar o cache juntos');
-  assert.match(render, new RegExp(`data\\.js\\?${dataVersion}`));
+  assert.equal(importVersion(render, 'data.js'), dataVersion, 'render.js deve usar a mesma versão de data.js');
 });
 
 test('troca de papel espera a seleção efetiva em vez de reagir ao click que abre o combo', async () => {
