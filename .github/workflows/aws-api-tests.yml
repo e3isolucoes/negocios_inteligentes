@@ -66,3 +66,7 @@ jobs:
       - name: Validate SAM template
         run: sam validate --lint --template-file template.yaml
         working-directory: painel-obrigacoes/aws
+
+      - name: Build SAM application
+        run: sam build --template-file template.yaml
+        working-directory: painel-obrigacoes/aws
