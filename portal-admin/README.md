@@ -56,3 +56,20 @@ A identidade precisa ter permissão para executar build no ACR `acre3i431811` e 
 Isso evita falso bloqueio de ferramenta quando o Portal autenticou por cookie mas a aplicação tenta reutilizar um bearer antigo. A ponte não concede ferramentas e não altera autorização no servidor; ela apenas preserva corretamente a sessão já autenticada.
 
 O build injeta `/client-tool-auth.js` antes do bundle principal do Portal e valida que o script está presente uma única vez.
+
+
+## Promoção segura de revisões
+
+O Container App `e3i-portal-test` opera em modo de múltiplas revisões. Nesse modo, criar uma nova revisão não significa que ela recebe tráfego automaticamente.
+
+O workflow segue a sequência:
+
+1. publica uma imagem imutável no ACR;
+2. cria a revisão candidata;
+3. espera `latestReadyRevisionName` coincidir com a revisão candidata;
+4. testa diretamente o FQDN da revisão candidata;
+5. somente após o smoke test, promove essa revisão para 100% do tráfego;
+6. valida novamente o FQDN principal do Container App;
+7. valida o domínio público `portal.e3isolucoes.com.br`.
+
+Esse fluxo evita validar acidentalmente uma revisão antiga e evita promover uma revisão que ainda não passou pelo contrato de sessão anônima.
