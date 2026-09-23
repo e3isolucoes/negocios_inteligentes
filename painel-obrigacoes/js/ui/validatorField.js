@@ -17,13 +17,18 @@ import { escapeHtml } from '../dateUtils.js';
  * @param {boolean} isAdmin   se o usuário logado é da Gestão
  */
 export function validatorFieldHtml(ob, profiles = [], isAdmin = false) {
-  const marcado = ob?.requires_validation !== false ? 'checked' : '';
+  const marcado = ob?.requires_validation === true ? 'checked' : '';
   const atual = ob?.validator_id || '';
 
   if (!isAdmin) {
-    if (!ob?.requires_validation) return '';
+    // Na edição por membro a configuração continua somente leitura, mas os
+    // valores atuais precisam acompanhar o submit. Sem estes campos ocultos,
+    // uma edição operacional poderia reativar validação ou apagar o validador.
+    const preserved = `<input type="checkbox" id="fRequiresValidation" ${marcado} hidden aria-hidden="true" />`
+      + `<input type="hidden" id="fValidator" value="${escapeHtml(atual)}" />`;
+    if (!ob?.requires_validation) return preserved;
     const quem = profiles.find(p => p.id === atual);
-    return `
+    return preserved + `
       <div class="field field-leitura">
         <label>Validação</label>
         <p class="valor-leitura">
@@ -44,7 +49,7 @@ export function validatorFieldHtml(ob, profiles = [], isAdmin = false) {
   return `
     <div class="field field-validacao">
       <label class="check-inline">
-        <input type="checkbox" id="fRequiresValidation" ${marcado} disabled />
+        <input type="checkbox" id="fRequiresValidation" ${marcado} />
         <span>Exige validação antes de ser concluída</span>
       </label>
       <div class="sub-campo" id="fValidatorWrap" ${marcado ? '' : 'hidden'}>
@@ -54,7 +59,7 @@ export function validatorFieldHtml(ob, profiles = [], isAdmin = false) {
           ${opcoes}
         </select>
         <small class="hint">
-          Toda tarefa passa por validação. Membros não podem validar o próprio
+          Ative esta opção somente quando houver validação formal. Membros não podem validar o próprio
           trabalho; administradores concluem diretamente as atividades que executam.
         </small>
       </div>
