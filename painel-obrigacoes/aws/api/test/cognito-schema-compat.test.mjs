@@ -22,8 +22,9 @@ test('autorização canônica continua baseada em membership/entitlements, não 
     readFile(new URL('../src/model.mjs', import.meta.url), 'utf8'),
   ]);
 
-  assert.match(auth, /membershipPk\(userId\)/);
-  assert.match(auth, /MEMBERSHIP#/);
+  assert.match(auth, /MEMBER_INDEX/);
+  assert.match(auth, /memberSk\(userId\)/);
+  assert.match(auth, /MEMBER#/);
   assert.doesNotMatch(auth, /active_workspace_id/);
   assert.match(model, /moduleGrants|grant|readGrant|writeGrant/);
 });
