@@ -1,0 +1,32 @@
+{
+  "version": 1,
+  "service": "e3i-intelligence",
+  "environment": "staging",
+  "deployment": {
+    "automatic": false,
+    "featureEnabledByDefault": false,
+    "ingestionEnabledByDefault": false,
+    "existingToolDependency": false
+  },
+  "plannedResources": [
+    { "name": "IntelligenceEventBus", "kind": "event-bus", "connectedToExistingTools": false },
+    { "name": "EventQueue", "kind": "queue", "connectedToExistingTools": false },
+    { "name": "EventDeadLetterQueue", "kind": "dead-letter-queue", "connectedToExistingTools": false },
+    { "name": "EventLedger", "kind": "tenant-scoped-store", "encryptionAtRest": true, "pointInTimeRecovery": true },
+    { "name": "MappingStore", "kind": "tenant-scoped-store", "encryptionAtRest": true, "pointInTimeRecovery": true },
+    { "name": "SavingsLedger", "kind": "tenant-scoped-store", "encryptionAtRest": true, "pointInTimeRecovery": true },
+    { "name": "AuditStore", "kind": "tenant-scoped-audit-store", "encryptionAtRest": true, "pointInTimeRecovery": true },
+    { "name": "EvidenceStore", "kind": "private-versioned-object-store", "encryptionAtRest": true, "publicAccess": false },
+    { "name": "HealthEndpoint", "kind": "health-only-api", "accessesBusinessData": false }
+  ],
+  "guardrails": {
+    "tenantIsolationRequired": true,
+    "provenanceRequired": true,
+    "processingPurposeRequired": true,
+    "dataClassificationRequired": true,
+    "retentionClassRequired": true,
+    "customerDataForModelTraining": false,
+    "agentsReadOnlyInitially": true,
+    "operationalToolsMustWorkWhenDisabled": true
+  }
+}
