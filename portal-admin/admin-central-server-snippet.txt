@@ -171,22 +171,26 @@ function e3iAdminCentralRequireAdmin(req, res) {
   }
   const activeOrganizationId = e3iAdminCentralActiveOrganization(authResult, dataset);
   const requestedOrganizationId = String(req.params?.organizationId || '').trim();
-  if (!activeOrganizationId || !requestedOrganizationId || activeOrganizationId !== requestedOrganizationId) {
-    res.status(404).json({ code: 'NOT_FOUND', error: 'Recurso não encontrado.' });
-    return null;
-  }
   const candidates = e3iAdminCentralAuthCandidates(authResult);
   const storedUser = e3iAdminCentralFindUser(authResult, dataset);
   const actorId = String(
     authResult?.userId || authResult?.actorId || candidates.user?.id || storedUser?.id || storedUser?.userId || 'admin',
   ).slice(0, 160);
   const actorEmail = String(authResult?.email || candidates.user?.email || storedUser?.email || '').trim().toLowerCase();
+  const isRoot = actorEmail === E3I_ADMIN_CENTRAL_ROOT_EMAIL;
+  const tenants = Array.isArray(dataset?.tables?.tenants?.data) ? dataset.tables.tenants.data : (Array.isArray(dataset?.tenants) ? dataset.tenants : []);
+  const requestedExists = tenants.some((item) => String(item?.id || '') === requestedOrganizationId);
+  if (!requestedOrganizationId || (isRoot ? !requestedExists : (!activeOrganizationId || activeOrganizationId !== requestedOrganizationId))) {
+    res.status(404).json({ code: 'NOT_FOUND', error: 'Recurso não encontrado.' });
+    return null;
+  }
   return {
     authResult,
-    organizationId: activeOrganizationId,
+    organizationId: requestedOrganizationId,
+    activeOrganizationId,
     actorId,
     actorEmail,
-    isRoot: actorEmail === E3I_ADMIN_CENTRAL_ROOT_EMAIL,
+    isRoot,
   };
 }
 

@@ -51,6 +51,8 @@ jobs:
           node --check portal-admin/test-admin-central.cjs
           node --check portal-admin/patch-admin-users.cjs
           node --check portal-admin/test-admin-users.cjs
+          node --check portal-admin/patch-admin-organizations.cjs
+          node --check portal-admin/test-admin-organizations.cjs
           node --check portal-admin/migrate-gra-users.cjs
           node --check portal-admin/test-migrate-gra-users.cjs
           node portal-admin/test-session-probe.cjs
@@ -58,6 +60,7 @@ jobs:
           node portal-admin/test-first-login.cjs
           node portal-admin/test-admin-central.cjs
           node portal-admin/test-admin-users.cjs
+          node portal-admin/test-admin-organizations.cjs
           node portal-admin/test-migrate-gra-users.cjs
 
   deploy:

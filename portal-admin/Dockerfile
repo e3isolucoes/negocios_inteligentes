@@ -20,6 +20,9 @@ COPY test-admin-central.cjs /tmp/test-admin-central.cjs
 COPY admin-users-server-snippet.txt /tmp/admin-users-server-snippet.txt
 COPY patch-admin-users.cjs /tmp/patch-admin-users.cjs
 COPY test-admin-users.cjs /tmp/test-admin-users.cjs
+COPY admin-organizations-server-snippet.txt /tmp/admin-organizations-server-snippet.txt
+COPY patch-admin-organizations.cjs /tmp/patch-admin-organizations.cjs
+COPY test-admin-organizations.cjs /tmp/test-admin-organizations.cjs
 COPY migrate-gra-users.cjs /app/migrate-gra-users.cjs
 
 RUN node /tmp/patch-session-probe.cjs \
@@ -27,6 +30,7 @@ RUN node /tmp/patch-session-probe.cjs \
  && node /tmp/patch-first-login.cjs \
  && node /tmp/patch-admin-central.cjs \
  && node /tmp/patch-admin-users.cjs \
+ && node /tmp/patch-admin-organizations.cjs \
  && node --check /app/dist/server.cjs \
  && node --check /app/dist/admin-central.js \
  && node --check /app/migrate-gra-users.cjs \
@@ -36,6 +40,7 @@ RUN node /tmp/patch-session-probe.cjs \
  && E3I_FIRST_LOGIN_DIR=/app/dist node /tmp/test-first-login.cjs \
  && E3I_ADMIN_DIR=/app/dist E3I_ADMIN_HTML=/app/private/admin-central.html E3I_ADMIN_PATCH_SCRIPT=/tmp/patch-admin-central.cjs E3I_ADMIN_SNIPPET=/tmp/admin-central-server-snippet.txt node /tmp/test-admin-central.cjs \
  && E3I_ADMIN_DIR=/app/dist E3I_ADMIN_USERS_PATCH_SCRIPT=/tmp/patch-admin-users.cjs E3I_ADMIN_USERS_SNIPPET=/tmp/admin-users-server-snippet.txt node /tmp/test-admin-users.cjs \
+ && E3I_ADMIN_DIR=/app/dist E3I_ADMIN_ORGANIZATIONS_PATCH_SCRIPT=/tmp/patch-admin-organizations.cjs E3I_ADMIN_ORGANIZATIONS_SNIPPET=/tmp/admin-organizations-server-snippet.txt node /tmp/test-admin-organizations.cjs \
  && grep -Fq 'E3I_ANONYMOUS_SESSION_PROBE_V3' /app/dist/server.cjs \
  && grep -Fq 'session-probe-middleware.cjs' /app/dist/server.cjs \
  && grep -Fq 'E3I_CLIENT_TOOL_AUTH_BRIDGE_V1' /app/dist/client-tool-auth.js \
@@ -52,10 +57,13 @@ RUN node /tmp/patch-session-probe.cjs \
  && grep -Fq "app.get('/api/admin/access'" /app/dist/server.cjs \
  && grep -Fq "app.get('/admin-central.html'" /app/dist/server.cjs \
  && grep -Fq '/api/admin/organizations/:organizationId/client-tools/:toolId' /app/dist/server.cjs \
- && grep -Fq '/api/admin/organizations/:organizationId/users' /app/dist/server.cjs
+ && grep -Fq '/api/admin/organizations/:organizationId/users' /app/dist/server.cjs \
+ && grep -Fq "app.get('/api/admin/organizations'" /app/dist/server.cjs \
+ && grep -Fq '/api/admin/organizations/:organizationId/members/:userId' /app/dist/server.cjs \
+ && grep -Fq '/api/admin/organizations/:organizationId/activate' /app/dist/server.cjs
 
 LABEL e3i.portal.source="e3isolucoes/negocios_inteligentes" \
-      e3i.portal.fix="anonymous-session-probe-v3,client-tool-auth-bridge-v1,admin-central-v1,admin-users-v1,existing-user-reconciliation-v1,first-login-v1"
+      e3i.portal.fix="anonymous-session-probe-v3,client-tool-auth-bridge-v1,admin-central-v1,admin-users-v1,existing-user-reconciliation-v1,first-login-v1,admin-organizations-v1"
 
 
 CMD ["sh", "-c", "node /app/migrate-gra-users.cjs && exec node /app/dist/server.cjs"]

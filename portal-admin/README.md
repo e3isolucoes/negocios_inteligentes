@@ -94,3 +94,38 @@ A organização é derivada da sessão autenticada e validada no servidor. O cli
 A página também inclui gestão de usuários da organização, com proteção contra auto-revogação e remoção do último administrador.
 
 O link **Administração** é inserido no próprio Portal somente quando `GET /api/admin/access` retorna `authorized: true`.
+
+
+## Gestão profissional de empresas e acessos
+
+A Administração Central separa explicitamente três conceitos:
+
+1. **Empresa cadastrada** — registro organizacional disponível no Portal.
+2. **Vínculo do usuário** — membership que permite ao usuário pertencer à empresa.
+3. **Empresa ativa** — contexto efetivamente usado pelo Portal para resolver `/api/client-tools` e validar o acesso às ferramentas.
+
+Um usuário pode possuir vínculo com mais de uma empresa, mas apenas uma empresa é o contexto ativo por vez.
+
+A tela `/admin-central.html` possui a área **Empresas**, onde o administrador raiz pode:
+
+- cadastrar e editar empresas;
+- selecionar a empresa que está sendo administrada;
+- tornar uma empresa o contexto ativo da sessão;
+- visualizar quantidade de usuários e administradores vinculados;
+- vincular usuários à empresa;
+- definir uma empresa vinculada como empresa ativa de um usuário.
+
+Ao alterar a empresa ativa, o overlay sincroniza o dataset persistido e as estruturas de usuário/sessão em memória do Portal. Isso evita o falso cenário em que a Administração mostra um vínculo válido, mas `/api/client-tools` continua avaliando a empresa anterior.
+
+Administradores delegados permanecem limitados às empresas às quais possuem membership ativo. Cadastro de empresas e gestão cross-tenant continuam restritos ao administrador raiz.
+
+### Sequência recomendada para liberar uma ferramenta
+
+1. Cadastre ou selecione a empresa em **Empresas**.
+2. Vincule o usuário à empresa em **Usuários**.
+3. Quando necessário, use **Definir como ativa** para alinhar o contexto do usuário.
+4. Para administrar ferramentas, torne a empresa selecionada **ativa para a sessão administrativa**.
+5. Em **Ferramentas**, conceda o acesso.
+6. Volte ao Portal e atualize o catálogo.
+
+Essa sequência mantém o grant da ferramenta e o contexto empresarial consistentes.
