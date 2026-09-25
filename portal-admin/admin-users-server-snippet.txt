@@ -15,6 +15,13 @@ function e3iAdminUsersReadDataset() { return JSON.parse(e3iAdminUsersFs.readFile
 function e3iAdminUsersUsers(dataset) { if (Array.isArray(dataset?.tables?.users?.data)) return dataset.tables.users.data; if (Array.isArray(dataset?.users)) return dataset.users; if (Array.isArray(dataset?.data?.users)) return dataset.data.users; return []; }
 function e3iAdminUsersMemberships(dataset) { const candidates = [dataset?.tables?.organization_memberships?.data, dataset?.memberships, dataset?.organizationMembers, dataset?.tenantMemberships, dataset?.data?.memberships]; return candidates.find(Array.isArray) || []; }
 function e3iAdminUsersTenants(dataset) { return Array.isArray(dataset?.tables?.tenants?.data) ? dataset.tables.tenants.data : (Array.isArray(dataset?.tenants) ? dataset.tenants : []); }
+function e3iAdminUsersOrganizationInfo(dataset, organizationId) {
+  const tenant = e3iAdminUsersTenants(dataset).find((item) => String(item?.id || '') === String(organizationId));
+  return {
+    id: String(organizationId || ''),
+    name: String(tenant?.tradeName || tenant?.legalName || tenant?.name || organizationId || 'Organização'),
+  };
+}
 function e3iAdminUsersWriteDataset(dataset, organizationId) {
   if (dataset?.tables?.users) dataset.tables.users.rowsCount = e3iAdminUsersUsers(dataset).length;
   if (dataset?.tables?.organization_memberships) dataset.tables.organization_memberships.rowsCount = e3iAdminUsersMemberships(dataset).length;
@@ -63,8 +70,11 @@ function e3iAdminUsersIsAdmin(user) {
 }
 function e3iAdminUsersActiveAdminCount(dataset, organizationId) { return e3iAdminUsersUsers(dataset).filter((user) => { if (String(user?.status || 'ACTIVE').toUpperCase() !== 'ACTIVE' || !e3iAdminUsersIsAdmin(user)) return false; const membership = e3iAdminUsersMembership(dataset, organizationId, user.id || user.userId); if (membership && ['INACTIVE','DISABLED','SUSPENDED'].includes(String(membership.status || '').toUpperCase())) return false; return Boolean(membership) || String(user?.tenantId || user?.organizationId || '') === String(organizationId); }).length; }
 
-function e3iAdminUsersPublic(user, principal) {
+function e3iAdminUsersPublic(user, principal, relation = e3iAdminUsersRelation(principal.dataset, principal.organizationId, user.id || user.userId)) {
   const email = e3iAdminUsersNormalizeEmail(user.email);
+  const organization = e3iAdminUsersOrganizationInfo(principal.dataset, principal.organizationId);
+  const membership = relation?.membership || null;
+  const linkedByTenant = String(user?.tenantId || user?.organizationId || '') === String(principal.organizationId);
   return {
     id: String(user.id || user.userId || ''),
     name: String(user.name || ''),
@@ -76,6 +86,12 @@ function e3iAdminUsersPublic(user, principal) {
     updatedAt: String(user.updatedAt || user.passwordChangedAt || ''),
     isSelf: String(user.id || user.userId || '') === principal.actorId || email === principal.actorEmail,
     isRoot: email === E3I_ADMIN_USERS_ROOT_EMAIL,
+    organizationId: organization.id,
+    organizationName: organization.name,
+    linked: Boolean(membership) || linkedByTenant,
+    membershipId: String(membership?.id || ''),
+    membershipRole: String(membership?.role || ''),
+    membershipStatus: String(membership?.status || (linkedByTenant ? 'ACTIVE' : 'UNLINKED')).toUpperCase(),
   };
 }
 function e3iAdminUsersValidateInput(body) { if (!body || typeof body !== 'object' || Array.isArray(body)) throw Object.assign(new Error('Corpo da requisição inválido.'), { status:400, code:'INVALID_BODY' }); if (Object.keys(body).some((key) => !['name','email','role'].includes(key))) throw Object.assign(new Error('Campo não permitido.'), { status:400, code:'UNKNOWN_FIELD' }); const name = e3iAdminUsersSafeText(body.name,120); const email = e3iAdminUsersValidEmail(body.email); const role = String(body.role || '').toUpperCase(); if (!name) throw Object.assign(new Error('Nome inválido.'), {status:400,code:'INVALID_NAME'}); if (!email) throw Object.assign(new Error('E-mail inválido.'), {status:400,code:'INVALID_EMAIL'}); if (!E3I_ADMIN_USERS_ROLES.has(role)) throw Object.assign(new Error('Papel inválido.'), {status:400,code:'INVALID_ROLE'}); return {name,email,role}; }
@@ -108,12 +124,28 @@ function e3iAdminUsersApplyDelegation(user, role, now) {
 app.get('/api/admin/organizations/:organizationId/users', (req, res) => {
   try {
     const principal = e3iAdminUsersRequireAdmin(req, res); if (!principal) return;
-    const list = e3iAdminUsersUsers(principal.dataset)
-      .filter((u) => Boolean(e3iAdminUsersRelation(principal.dataset, principal.organizationId, u.id || u.userId)))
-      .map((u) => e3iAdminUsersPublic(u, principal))
+    const allUsers = e3iAdminUsersUsers(principal.dataset);
+    const visibleUsers = principal.isRoot
+      ? allUsers
+      : allUsers.filter((u) => Boolean(e3iAdminUsersRelation(principal.dataset, principal.organizationId, u.id || u.userId)));
+    const list = visibleUsers
+      .map((u) => e3iAdminUsersPublic(
+        u,
+        principal,
+        e3iAdminUsersRelation(principal.dataset, principal.organizationId, u.id || u.userId),
+      ))
       .sort((a, b) => a.name.localeCompare(b.name, 'pt-BR'));
+    const organization = e3iAdminUsersOrganizationInfo(principal.dataset, principal.organizationId);
     res.set('Cache-Control', 'no-store');
-    return res.json({ organizationId: principal.organizationId, users: list, permissions: { canDelegateAdmin: principal.isRoot } });
+    return res.json({
+      organizationId: principal.organizationId,
+      organization,
+      users: list,
+      permissions: {
+        canDelegateAdmin: principal.isRoot,
+        canManageMemberships: principal.isRoot,
+      },
+    });
   } catch (error) { return e3iAdminUsersError(res, error, 'Não foi possível listar os usuários.'); }
 });
 
@@ -160,6 +192,42 @@ app.put('/api/admin/organizations/:organizationId/users/:userId', (req, res) => 
     e3iAdminUsersAudit('ADMIN_USER_UPDATED', principal, relation.user.id, `role=${input.role}`); e3iAdminUsersPersist(principal);
     return res.json({ user: e3iAdminUsersPublic(relation.user, principal) });
   } catch (error) { return e3iAdminUsersError(res, error, 'Não foi possível atualizar o usuário.'); }
+});
+
+app.post('/api/admin/organizations/:organizationId/users/:userId/link', (req, res) => {
+  try {
+    const principal = e3iAdminUsersRequireAdmin(req, res); if (!principal || !e3iAdminUsersRequireWrite(req, res)) return;
+    if (!principal.isRoot) return res.status(403).json({ code: 'ROOT_ADMIN_ONLY', error: 'Somente o administrador raiz pode vincular uma conta existente a uma empresa.' });
+    const user = e3iAdminUsersUsers(principal.dataset).find((u) => String(u?.id || u?.userId || '') === String(req.params.userId || ''));
+    if (!user) return res.status(404).json({ code: 'NOT_FOUND', error: 'Usuário não encontrado.' });
+
+    const now = new Date().toISOString();
+    let membership = e3iAdminUsersMembership(principal.dataset, principal.organizationId, user.id || user.userId);
+    if (!membership) {
+      membership = {
+        id: `mem-${e3iAdminUsersCrypto.randomUUID()}`,
+        userId: String(user.id || user.userId),
+        organizationId: principal.organizationId,
+        role: e3iAdminUsersIsAdmin(user) ? 'ADMIN' : 'MEMBER',
+        status: 'ACTIVE',
+        joinedAt: now,
+      };
+      e3iAdminUsersMemberships(principal.dataset).push(membership);
+      e3iAdminUsersSyncLiveMembership(membership, true);
+    } else {
+      membership.status = 'ACTIVE';
+      membership.role = e3iAdminUsersIsAdmin(user) ? 'ADMIN' : 'MEMBER';
+      membership.updatedAt = now;
+      e3iAdminUsersSyncLiveMembership(membership);
+    }
+
+    user.tenantId = principal.organizationId;
+    user.updatedAt = now;
+    e3iAdminUsersSyncLiveUser(user);
+    e3iAdminUsersAudit('ADMIN_USER_ORGANIZATION_LINKED', principal, String(user.id || user.userId), `organization=${principal.organizationId}`);
+    e3iAdminUsersPersist(principal);
+    return res.json({ user: e3iAdminUsersPublic(user, principal, { user, membership }) });
+  } catch (error) { return e3iAdminUsersError(res, error, 'Não foi possível vincular o usuário à empresa.'); }
 });
 
 app.post('/api/admin/organizations/:organizationId/users/:userId/suspend', (req, res) => {
