@@ -1,0 +1,325 @@
+// E3I_ADMIN_ORGANIZATIONS_PATCH_V1
+const e3iAdminOrganizationsFs = require('fs');
+const e3iAdminOrganizationsPath = require('path');
+const e3iAdminOrganizationsCrypto = require('crypto');
+const E3I_ADMIN_ORGANIZATIONS_DATA_FILE = process.env.E3I_PORTAL_DATA_FILE || '/app/data/bigquery_dataset.json';
+const E3I_ADMIN_ORGANIZATIONS_ROOT_EMAIL = String(process.env.E3I_ROOT_ADMIN_EMAIL || 'admin@e3isolucoes.com.br').trim().toLowerCase();
+
+function e3iAdminOrganizationsReadDataset() {
+  return JSON.parse(e3iAdminOrganizationsFs.readFileSync(E3I_ADMIN_ORGANIZATIONS_DATA_FILE, 'utf8'));
+}
+function e3iAdminOrganizationsNormalizeEmail(value) { return String(value || '').trim().toLowerCase(); }
+function e3iAdminOrganizationsUsers(dataset) {
+  if (Array.isArray(dataset?.tables?.users?.data)) return dataset.tables.users.data;
+  if (Array.isArray(dataset?.users)) return dataset.users;
+  if (Array.isArray(dataset?.data?.users)) return dataset.data.users;
+  return [];
+}
+function e3iAdminOrganizationsMemberships(dataset) {
+  const candidates = [
+    dataset?.tables?.organization_memberships?.data,
+    dataset?.memberships,
+    dataset?.organizationMembers,
+    dataset?.tenantMemberships,
+    dataset?.data?.memberships,
+  ];
+  return candidates.find(Array.isArray) || [];
+}
+function e3iAdminOrganizationsTenants(dataset) {
+  if (Array.isArray(dataset?.tables?.tenants?.data)) return dataset.tables.tenants.data;
+  if (Array.isArray(dataset?.tenants)) return dataset.tenants;
+  if (!dataset.tables || typeof dataset.tables !== 'object') dataset.tables = {};
+  if (!dataset.tables.tenants || typeof dataset.tables.tenants !== 'object') {
+    dataset.tables.tenants = { schema: {}, data: [], rowsCount: 0 };
+  }
+  if (!Array.isArray(dataset.tables.tenants.data)) dataset.tables.tenants.data = [];
+  return dataset.tables.tenants.data;
+}
+function e3iAdminOrganizationsEnsureMembershipTable(dataset) {
+  if (Array.isArray(dataset?.tables?.organization_memberships?.data)) return dataset.tables.organization_memberships.data;
+  if (!dataset.tables || typeof dataset.tables !== 'object') dataset.tables = {};
+  if (!dataset.tables.organization_memberships || typeof dataset.tables.organization_memberships !== 'object') {
+    dataset.tables.organization_memberships = { schema: {}, data: [], rowsCount: 0 };
+  }
+  if (!Array.isArray(dataset.tables.organization_memberships.data)) dataset.tables.organization_memberships.data = [];
+  return dataset.tables.organization_memberships.data;
+}
+function e3iAdminOrganizationsWriteDataset(dataset) {
+  if (dataset?.tables?.tenants) dataset.tables.tenants.rowsCount = e3iAdminOrganizationsTenants(dataset).length;
+  if (dataset?.tables?.organization_memberships) dataset.tables.organization_memberships.rowsCount = e3iAdminOrganizationsMemberships(dataset).length;
+  const dir = e3iAdminOrganizationsPath.dirname(E3I_ADMIN_ORGANIZATIONS_DATA_FILE);
+  e3iAdminOrganizationsFs.mkdirSync(dir, { recursive: true, mode: 0o700 });
+  const temp = `${E3I_ADMIN_ORGANIZATIONS_DATA_FILE}.${process.pid}.${Date.now()}.tmp`;
+  const serialized = `${JSON.stringify(dataset, null, 2)}\n`;
+  let fd;
+  try {
+    fd = e3iAdminOrganizationsFs.openSync(temp, 'w', 0o600);
+    e3iAdminOrganizationsFs.writeFileSync(fd, serialized, 'utf8');
+    e3iAdminOrganizationsFs.fsyncSync(fd);
+    e3iAdminOrganizationsFs.closeSync(fd);
+    fd = undefined;
+    e3iAdminOrganizationsFs.renameSync(temp, E3I_ADMIN_ORGANIZATIONS_DATA_FILE);
+    try { e3iAdminOrganizationsFs.chmodSync(E3I_ADMIN_ORGANIZATIONS_DATA_FILE, 0o600); } catch (_) {}
+  } finally {
+    if (fd !== undefined) try { e3iAdminOrganizationsFs.closeSync(fd); } catch (_) {}
+    if (e3iAdminOrganizationsFs.existsSync(temp)) try { e3iAdminOrganizationsFs.unlinkSync(temp); } catch (_) {}
+  }
+}
+function e3iAdminOrganizationsAuthCandidates(authResult) {
+  const user = authResult?.user || authResult?.session?.user || authResult?.principal || {};
+  return {
+    user,
+    ids: [authResult?.userId, authResult?.actorId, user?.id, user?.userId, authResult?.session?.userId].filter(Boolean).map(String),
+    emails: [authResult?.email, user?.email, authResult?.session?.email].filter(Boolean).map(e3iAdminOrganizationsNormalizeEmail),
+  };
+}
+function e3iAdminOrganizationsStoredUser(authResult, dataset) {
+  const candidates = e3iAdminOrganizationsAuthCandidates(authResult);
+  return e3iAdminOrganizationsUsers(dataset).find((user) => {
+    const id = String(user?.id || user?.userId || '');
+    const email = e3iAdminOrganizationsNormalizeEmail(user?.email);
+    return (id && candidates.ids.includes(id)) || (email && candidates.emails.includes(email));
+  }) || null;
+}
+function e3iAdminOrganizationsIsAdminUser(user) {
+  const email = e3iAdminOrganizationsNormalizeEmail(user?.email);
+  if (email === E3I_ADMIN_ORGANIZATIONS_ROOT_EMAIL) return true;
+  const roles = [user?.role, user?.systemRole, user?.portalRole, ...(Array.isArray(user?.roles) ? user.roles : [])];
+  return e3iAdminOrganizationsNormalizeEmail(user?.adminCentralGrantedBy) === E3I_ADMIN_ORGANIZATIONS_ROOT_EMAIL
+    && roles.some((role) => String(role || '').toUpperCase() === 'E3I_ADMIN');
+}
+function e3iAdminOrganizationsRequireAdmin(req, res, { root = false } = {}) {
+  const authResult = validateSession(req, res);
+  if (!authResult) return null;
+  let dataset;
+  try { dataset = e3iAdminOrganizationsReadDataset(); }
+  catch (_) { res.status(500).json({ code: 'INTERNAL_ERROR', error: 'Não foi possível carregar as empresas.' }); return null; }
+  const candidates = e3iAdminOrganizationsAuthCandidates(authResult);
+  const stored = e3iAdminOrganizationsStoredUser(authResult, dataset);
+  const email = e3iAdminOrganizationsNormalizeEmail(authResult?.email || candidates.user?.email || stored?.email);
+  const isRoot = email === E3I_ADMIN_ORGANIZATIONS_ROOT_EMAIL;
+  if (!isRoot && !e3iAdminOrganizationsIsAdminUser(stored)) {
+    res.status(403).json({ code: 'ADMIN_REQUIRED', error: 'Acesso administrativo necessário.' });
+    return null;
+  }
+  if (root && !isRoot) {
+    res.status(403).json({ code: 'ROOT_ADMIN_REQUIRED', error: 'Somente o administrador raiz pode executar esta ação.' });
+    return null;
+  }
+  return {
+    authResult,
+    dataset,
+    storedUser: stored,
+    actorId: String(authResult?.userId || authResult?.actorId || candidates.user?.id || stored?.id || 'admin').slice(0, 160),
+    actorEmail: email,
+    isRoot,
+  };
+}
+function e3iAdminOrganizationsRequireWrite(req, res) {
+  if (String(req.get('x-e3i-admin-request') || '') !== '1') {
+    res.status(403).json({ code: 'ADMIN_REQUEST_HEADER_REQUIRED', error: 'Requisição administrativa inválida.' });
+    return false;
+  }
+  return true;
+}
+function e3iAdminOrganizationsSafe(value, maxLength) {
+  const text = String(value || '').trim();
+  return text && text.length <= maxLength && !/[\u0000-\u001f\u007f]/.test(text) ? text : '';
+}
+function e3iAdminOrganizationsDocument(value) {
+  const digits = String(value || '').replace(/\D/g, '');
+  return !digits || (digits.length >= 11 && digits.length <= 14) ? digits : null;
+}
+function e3iAdminOrganizationsSlug(value) {
+  const base = String(value || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase()
+    .replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 42);
+  return base || 'empresa';
+}
+function e3iAdminOrganizationsById(dataset, organizationId) {
+  return e3iAdminOrganizationsTenants(dataset).find((item) => String(item?.id || '') === String(organizationId)) || null;
+}
+function e3iAdminOrganizationsPublic(dataset, tenant) {
+  const id = String(tenant?.id || '');
+  const memberships = e3iAdminOrganizationsMemberships(dataset).filter((item) =>
+    String(item?.organizationId || item?.tenantId || '') === id
+    && !['INACTIVE','DISABLED','SUSPENDED'].includes(String(item?.status || 'ACTIVE').toUpperCase())
+  );
+  const users = e3iAdminOrganizationsUsers(dataset);
+  const activeUsers = new Set(memberships.map((item) => String(item?.userId || item?.memberId || '')).filter(Boolean));
+  return {
+    id,
+    legalName: String(tenant?.legalName || tenant?.name || ''),
+    tradeName: String(tenant?.tradeName || tenant?.legalName || tenant?.name || ''),
+    document: String(tenant?.document || tenant?.cnpj || ''),
+    status: String(tenant?.status || 'ACTIVE').toUpperCase(),
+    usersCount: activeUsers.size,
+    adminCount: users.filter((user) => activeUsers.has(String(user?.id || user?.userId || '')) && e3iAdminOrganizationsIsAdminUser(user)).length,
+    createdAt: String(tenant?.createdAt || tenant?.created_at || ''),
+    updatedAt: String(tenant?.updatedAt || tenant?.updated_at || ''),
+  };
+}
+function e3iAdminOrganizationsAudit(principal, action, organizationId, detail='') {
+  try {
+    if (!principal.dataset.tables || typeof principal.dataset.tables !== 'object') principal.dataset.tables = {};
+    if (!principal.dataset.tables.admin_audit) principal.dataset.tables.admin_audit = { schema: {}, data: [], rowsCount: 0 };
+    const records = principal.dataset.tables.admin_audit.data;
+    if (!Array.isArray(records)) principal.dataset.tables.admin_audit.data = [];
+    principal.dataset.tables.admin_audit.data.push({
+      id: `audit-${e3iAdminOrganizationsCrypto.randomUUID()}`,
+      action,
+      organizationId,
+      actorId: principal.actorId,
+      actorEmail: principal.actorEmail,
+      detail: String(detail || '').slice(0, 500),
+      occurredAt: new Date().toISOString(),
+    });
+    principal.dataset.tables.admin_audit.rowsCount = principal.dataset.tables.admin_audit.data.length;
+  } catch (_) {}
+}
+
+app.get('/api/admin/organizations', (req, res) => {
+  const principal = e3iAdminOrganizationsRequireAdmin(req, res);
+  if (!principal) return;
+  const candidates = e3iAdminOrganizationsAuthCandidates(principal.authResult);
+  const userId = String(principal.storedUser?.id || candidates.ids[0] || '');
+  const activeOrganizationId = String(
+    principal.authResult?.organizationId
+    || principal.authResult?.activeOrganizationId
+    || principal.authResult?.tenantId
+    || principal.storedUser?.tenantId
+    || principal.storedUser?.organizationId
+    || ''
+  );
+  let tenants = e3iAdminOrganizationsTenants(principal.dataset);
+  if (!principal.isRoot) {
+    const allowed = new Set(e3iAdminOrganizationsMemberships(principal.dataset)
+      .filter((item) => String(item?.userId || item?.memberId || '') === userId
+        && !['INACTIVE','DISABLED','SUSPENDED'].includes(String(item?.status || 'ACTIVE').toUpperCase()))
+      .map((item) => String(item?.organizationId || item?.tenantId || '')));
+    tenants = tenants.filter((tenant) => allowed.has(String(tenant?.id || '')));
+  }
+  res.set('Cache-Control', 'no-store');
+  return res.json({
+    organizations: tenants.map((tenant) => e3iAdminOrganizationsPublic(principal.dataset, tenant)),
+    activeOrganizationId,
+    permissions: { canCreateOrganizations: principal.isRoot, canManageAllOrganizations: principal.isRoot },
+  });
+});
+
+app.post('/api/admin/organizations', (req, res) => {
+  const principal = e3iAdminOrganizationsRequireAdmin(req, res, { root: true });
+  if (!principal || !e3iAdminOrganizationsRequireWrite(req, res)) return;
+  const legalName = e3iAdminOrganizationsSafe(req.body?.legalName, 180);
+  const tradeName = e3iAdminOrganizationsSafe(req.body?.tradeName || legalName, 180);
+  const document = e3iAdminOrganizationsDocument(req.body?.document);
+  if (!legalName || !tradeName || document === null) {
+    return res.status(400).json({ code: 'INVALID_ORGANIZATION', error: 'Informe razão social, nome da empresa e um documento válido.' });
+  }
+  const tenants = e3iAdminOrganizationsTenants(principal.dataset);
+  if (document && tenants.some((item) => String(item?.document || item?.cnpj || '').replace(/\D/g,'') === document)) {
+    return res.status(409).json({ code: 'DOCUMENT_ALREADY_EXISTS', error: 'Já existe uma empresa cadastrada com este documento.' });
+  }
+  const now = new Date().toISOString();
+  const tenant = {
+    id: `org-${e3iAdminOrganizationsSlug(tradeName)}-${e3iAdminOrganizationsCrypto.randomUUID().slice(0,8)}`,
+    legalName,
+    tradeName,
+    document,
+    status: 'ACTIVE',
+    createdAt: now,
+    updatedAt: now,
+  };
+  tenants.push(tenant);
+  e3iAdminOrganizationsAudit(principal, 'ORGANIZATION_CREATED', tenant.id, tradeName);
+  e3iAdminOrganizationsWriteDataset(principal.dataset);
+  return res.status(201).json({ organization: e3iAdminOrganizationsPublic(principal.dataset, tenant) });
+});
+
+app.put('/api/admin/organizations/:organizationId', (req, res) => {
+  const principal = e3iAdminOrganizationsRequireAdmin(req, res, { root: true });
+  if (!principal || !e3iAdminOrganizationsRequireWrite(req, res)) return;
+  const tenant = e3iAdminOrganizationsById(principal.dataset, req.params.organizationId);
+  if (!tenant) return res.status(404).json({ code: 'NOT_FOUND', error: 'Empresa não encontrada.' });
+  const legalName = e3iAdminOrganizationsSafe(req.body?.legalName, 180);
+  const tradeName = e3iAdminOrganizationsSafe(req.body?.tradeName || legalName, 180);
+  const document = e3iAdminOrganizationsDocument(req.body?.document);
+  const status = String(req.body?.status || tenant.status || 'ACTIVE').toUpperCase();
+  if (!legalName || !tradeName || document === null || !['ACTIVE','SUSPENDED'].includes(status)) {
+    return res.status(400).json({ code: 'INVALID_ORGANIZATION', error: 'Dados da empresa inválidos.' });
+  }
+  Object.assign(tenant, { legalName, tradeName, document, status, updatedAt: new Date().toISOString() });
+  e3iAdminOrganizationsAudit(principal, 'ORGANIZATION_UPDATED', tenant.id, `status=${status}`);
+  e3iAdminOrganizationsWriteDataset(principal.dataset);
+  return res.json({ organization: e3iAdminOrganizationsPublic(principal.dataset, tenant) });
+});
+
+app.put('/api/admin/organizations/:organizationId/members/:userId', (req, res) => {
+  const principal = e3iAdminOrganizationsRequireAdmin(req, res, { root: true });
+  if (!principal || !e3iAdminOrganizationsRequireWrite(req, res)) return;
+  const tenant = e3iAdminOrganizationsById(principal.dataset, req.params.organizationId);
+  const user = e3iAdminOrganizationsUsers(principal.dataset).find((item) => String(item?.id || item?.userId || '') === String(req.params.userId));
+  if (!tenant || !user) return res.status(404).json({ code: 'NOT_FOUND', error: 'Empresa ou usuário não encontrado.' });
+  const memberships = e3iAdminOrganizationsEnsureMembershipTable(principal.dataset);
+  let membership = memberships.find((item) =>
+    String(item?.organizationId || item?.tenantId || '') === String(tenant.id)
+    && String(item?.userId || item?.memberId || '') === String(user.id || user.userId)
+  );
+  const now = new Date().toISOString();
+  if (!membership) {
+    membership = {
+      id: `mem-${e3iAdminOrganizationsCrypto.randomUUID()}`,
+      userId: String(user.id || user.userId),
+      organizationId: tenant.id,
+      role: e3iAdminOrganizationsIsAdminUser(user) ? 'ADMIN' : 'MEMBER',
+      status: 'ACTIVE',
+      joinedAt: now,
+    };
+    memberships.push(membership);
+  } else {
+    membership.status = 'ACTIVE';
+    membership.role = e3iAdminOrganizationsIsAdminUser(user) ? 'ADMIN' : 'MEMBER';
+    membership.updatedAt = now;
+  }
+  if (req.body?.makeActive === true) {
+    user.tenantId = tenant.id;
+    user.organizationId = tenant.id;
+    user.updatedAt = now;
+  }
+  e3iAdminOrganizationsAudit(principal, 'ORGANIZATION_MEMBER_LINKED', tenant.id, `user=${user.id || user.userId};active=${req.body?.makeActive === true}`);
+  e3iAdminOrganizationsWriteDataset(principal.dataset);
+  return res.json({
+    membership: { id: membership.id, userId: membership.userId, organizationId: tenant.id, role: membership.role, status: membership.status },
+    activeOrganizationId: String(user.tenantId || user.organizationId || ''),
+  });
+});
+
+app.post('/api/admin/organizations/:organizationId/activate', (req, res) => {
+  const principal = e3iAdminOrganizationsRequireAdmin(req, res);
+  if (!principal || !e3iAdminOrganizationsRequireWrite(req, res)) return;
+  const tenant = e3iAdminOrganizationsById(principal.dataset, req.params.organizationId);
+  if (!tenant || String(tenant.status || 'ACTIVE').toUpperCase() !== 'ACTIVE') {
+    return res.status(404).json({ code: 'NOT_FOUND', error: 'Empresa ativa não encontrada.' });
+  }
+  const user = principal.storedUser;
+  if (!user) return res.status(404).json({ code: 'USER_NOT_FOUND', error: 'Usuário administrativo não encontrado.' });
+  const memberships = e3iAdminOrganizationsEnsureMembershipTable(principal.dataset);
+  const userId = String(user.id || user.userId || '');
+  let membership = memberships.find((item) => String(item?.organizationId || '') === String(tenant.id) && String(item?.userId || '') === userId);
+  if (!membership && !principal.isRoot) return res.status(403).json({ code: 'MEMBERSHIP_REQUIRED', error: 'Seu usuário não possui vínculo com esta empresa.' });
+  if (!membership) {
+    membership = { id: `mem-${e3iAdminOrganizationsCrypto.randomUUID()}`, userId, organizationId: tenant.id, role: 'ADMIN', status: 'ACTIVE', joinedAt: new Date().toISOString() };
+    memberships.push(membership);
+  } else {
+    membership.status = 'ACTIVE';
+  }
+  user.tenantId = tenant.id;
+  user.organizationId = tenant.id;
+  user.updatedAt = new Date().toISOString();
+  e3iAdminOrganizationsAudit(principal, 'ACTIVE_ORGANIZATION_CHANGED', tenant.id, `user=${userId}`);
+  e3iAdminOrganizationsWriteDataset(principal.dataset);
+  return res.json({
+    organization: e3iAdminOrganizationsPublic(principal.dataset, tenant),
+    activeOrganizationId: tenant.id,
+    reauthenticationRecommended: true,
+  });
+});
