@@ -128,12 +128,15 @@ export async function handler(event) {
         ddb,
         process.env.TABLE_NAME,
         session.refresh_token,
+        Date.now(),
+        { workspaceId: session.workspaceId, userId: session.userId },
       );
       return response(
         200,
         {
           access_token: session.access_token,
           cognito_access_token: session.cognito_access_token,
+          workspaceId: session.workspaceId,
         },
         event,
         { 'set-cookie': refreshCookie(cookieToken) },
@@ -197,6 +200,7 @@ export async function handler(event) {
         {
           access_token: rotated.access_token,
           cognito_access_token: rotated.cognito_access_token,
+          workspaceId: rotated.workspaceId,
         },
         event,
         { 'set-cookie': refreshCookie(rotated.cookieToken) },
