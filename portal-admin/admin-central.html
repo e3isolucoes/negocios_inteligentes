@@ -42,8 +42,13 @@
         <p>Administre usuários, ciclo de acesso, ferramentas, parâmetros do E3I Intelligence e governança mantendo o backend como fonte de verdade e a segregação por organização.</p>
       </div>
       <div class="organization-card" aria-live="polite">
-        <span>Organização ativa</span>
+        <span>Empresa em gestão</span>
+        <select id="organizationSelect" aria-label="Selecionar empresa em gestão"></select>
         <strong id="organizationId">Carregando…</strong>
+        <small id="activeOrganizationHint">Empresa ativa da sessão: carregando…</small>
+        <div class="organization-actions">
+          <button id="activateOrganizationButton" type="button" class="btn btn-secondary">Tornar ativa</button>
+        </div>
         <small id="settingsVersion">Configuração v—</small>
       </div>
     </section>
@@ -57,7 +62,8 @@
     </section>
 
     <nav class="tabs" aria-label="Áreas de administração">
-      <button class="tab is-active" type="button" data-tab="users" aria-controls="panel-users" aria-selected="true">Usuários</button>
+      <button class="tab is-active" type="button" data-tab="companies" aria-controls="panel-companies" aria-selected="true">Empresas</button>
+      <button class="tab" type="button" data-tab="users" aria-controls="panel-users" aria-selected="false">Usuários</button>
       <button class="tab" type="button" data-tab="access" aria-controls="panel-access" aria-selected="false">Ferramentas</button>
       <button class="tab" type="button" data-tab="parameters" aria-controls="panel-parameters" aria-selected="false">Parâmetros</button>
       <button class="tab" type="button" data-tab="governance" aria-controls="panel-governance" aria-selected="false">Governança</button>
@@ -65,7 +71,31 @@
 
     <div id="globalStatus" class="status-message" role="status" aria-live="polite"></div>
 
-    <section id="panel-users" class="panel tab-panel" data-panel="users" aria-labelledby="users-heading">
+    <section id="panel-companies" class="panel tab-panel" data-panel="companies" aria-labelledby="companies-heading">
+      <div class="panel-head">
+        <div>
+          <span class="eyebrow">CADASTRO E CONTEXTO</span>
+          <h2 id="companies-heading">Empresas</h2>
+          <p>Cadastre empresas, acompanhe vínculos e escolha explicitamente qual empresa será administrada. A empresa ativa da sessão determina o contexto usado pelo Portal ao validar ferramentas.</p>
+        </div>
+        <div class="panel-actions">
+          <label class="search-field compact"><span class="sr-only">Buscar empresa</span><input id="companySearchInput" type="search" placeholder="Buscar empresa ou documento…" autocomplete="off" /></label>
+          <button id="createOrganizationButton" type="button" class="btn btn-primary">+ Nova empresa</button>
+        </div>
+      </div>
+      <div class="context-notice">
+        <strong>Contexto de acesso:</strong>
+        <span id="organizationContextText">Carregando empresa ativa e empresa em gestão…</span>
+      </div>
+      <div id="companiesTableWrap" class="table-wrap" aria-live="polite" aria-busy="true">
+        <table class="data-table">
+          <thead><tr><th>Empresa</th><th>Documento</th><th>Usuários</th><th>Administradores</th><th>Status</th><th class="actions-col">Ações</th></tr></thead>
+          <tbody id="companiesTableBody"></tbody>
+        </table>
+      </div>
+    </section>
+
+    <section id="panel-users" class="panel tab-panel" data-panel="users" aria-labelledby="users-heading" hidden>
       <div class="panel-head">
         <div>
           <span class="eyebrow">IDENTIDADE E ACESSO</span>
@@ -141,9 +171,22 @@
       <label class="field-stack"><span>Nome</span><input id="userName" type="text" maxlength="120" required autocomplete="name" /></label>
       <label class="field-stack"><span>E-mail</span><input id="userEmail" type="email" maxlength="254" required autocomplete="email" /></label>
       <label class="field-stack"><span>Papel no Portal</span><select id="userRole"><option value="OPERATOR">Operador</option><option value="E3I_ADMIN">Administrador E3I</option></select><small>Privilégio administrativo permite gerir usuários, acessos e parâmetros desta organização.</small></label>
-      <label class="field-stack"><span>Empresa ativa</span><input id="userOrganization" type="text" readonly /><small>O vínculo empresarial é controlado pelo backend. Usuários existentes sem vínculo podem ser associados à empresa ativa pelo administrador raiz.</small></label>
+      <label class="field-stack"><span>Empresa em gestão</span><input id="userOrganization" type="text" readonly /><small>O usuário será criado ou vinculado à empresa selecionada no topo da Administração Central.</small></label>
       <div class="notice"><strong>Primeiro acesso seguro:</strong> novos usuários não recebem senha compartilhada. O acesso é ativado pelo fluxo de código enviado ao e-mail cadastrado e criação de senha forte.</div>
       <div class="dialog-actions"><button type="button" class="btn btn-secondary" data-user-cancel>Cancelar</button><button id="userSaveButton" type="submit" class="btn btn-primary">Salvar usuário</button></div>
+    </form>
+  </dialog>
+
+  <dialog id="organizationDialog" class="modal-dialog">
+    <form id="organizationForm" method="dialog" autocomplete="off">
+      <span class="eyebrow" id="organizationDialogEyebrow">NOVA EMPRESA</span>
+      <h2 id="organizationDialogTitle">Cadastrar empresa</h2>
+      <input id="organizationFormId" type="hidden" />
+      <label class="field-stack"><span>Razão social</span><input id="organizationLegalName" type="text" maxlength="180" required /></label>
+      <label class="field-stack"><span>Nome da empresa</span><input id="organizationTradeName" type="text" maxlength="180" required /></label>
+      <label class="field-stack"><span>CNPJ / CPF empresarial</span><input id="organizationDocument" type="text" maxlength="18" inputmode="numeric" /></label>
+      <label class="field-stack"><span>Status</span><select id="organizationStatus"><option value="ACTIVE">Ativa</option><option value="SUSPENDED">Suspensa</option></select></label>
+      <div class="dialog-actions"><button type="button" class="btn btn-secondary" data-organization-cancel>Cancelar</button><button id="organizationSaveButton" type="submit" class="btn btn-primary">Salvar empresa</button></div>
     </form>
   </dialog>
 
