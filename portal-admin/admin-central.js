@@ -5,7 +5,7 @@ const SAFE_DEFAULTS = Object.freeze({
 
 const state = {
   organizationId: '', tools: [], filter: '', busyToolId: '',
-  users: [], userFilter: '', userStatus: 'ALL', userBusy: false, canDelegateAdmin: false,
+  users: [], userFilter: '', userStatus: 'ALL', userBusy: false, canDelegateAdmin: false, canManageMemberships: false, organizationName: '',
   settings: structuredClone(SAFE_DEFAULTS), settingsVersion: 0, settingsUpdatedAt: '', audit: [], settingsBusy: false,
 };
 
@@ -14,7 +14,7 @@ const qa = (selector) => [...document.querySelectorAll(selector)];
 const els = {
   organizationId: q('#organizationId'), settingsVersion: q('#settingsVersion'), metricUsers: q('#metricUsers'), metricTotal: q('#metricTotal'), metricGranted: q('#metricGranted'), metricIntelligence: q('#metricIntelligence'), metricIntelligenceHint: q('#metricIntelligenceHint'), metricUpdated: q('#metricUpdated'), globalStatus: q('#globalStatus'),
   toolsGrid: q('#toolsGrid'), searchInput: q('#searchInput'), tabs: qa('[data-tab]'), panels: qa('[data-panel]'),
-  usersTableBody: q('#usersTableBody'), usersTableWrap: q('#usersTableWrap'), userSearchInput: q('#userSearchInput'), userStatusFilter: q('#userStatusFilter'), createUserButton: q('#createUserButton'), userDialog: q('#userDialog'), userForm: q('#userForm'), userDialogEyebrow: q('#userDialogEyebrow'), userDialogTitle: q('#userDialogTitle'), userId: q('#userId'), userName: q('#userName'), userEmail: q('#userEmail'), userRole: q('#userRole'), userSaveButton: q('#userSaveButton'),
+  usersTableBody: q('#usersTableBody'), usersTableWrap: q('#usersTableWrap'), userSearchInput: q('#userSearchInput'), userStatusFilter: q('#userStatusFilter'), createUserButton: q('#createUserButton'), userDialog: q('#userDialog'), userForm: q('#userForm'), userDialogEyebrow: q('#userDialogEyebrow'), userDialogTitle: q('#userDialogTitle'), userId: q('#userId'), userName: q('#userName'), userEmail: q('#userEmail'), userRole: q('#userRole'), userOrganization: q('#userOrganization'), userSaveButton: q('#userSaveButton'),
   settingsForm: q('#settingsForm'), saveSettings: q('#saveSettings'), reloadSettings: q('#reloadSettings'), intelligenceEnabled: q('#intelligenceEnabled'), ingestionEnabled: q('#ingestionEnabled'), agentMode: q('#agentMode'), requireHumanApproval: q('#requireHumanApproval'), allowSensitivePersonalData: q('#allowSensitivePersonalData'), defaultRetentionClass: q('#defaultRetentionClass'), mappingPurposeId: q('#mappingPurposeId'), auditLevel: q('#auditLevel'), savingValidationRequired: q('#savingValidationRequired'), auditCount: q('#auditCount'), auditList: q('#auditList'),
   confirmDialog: q('#confirmDialog'), confirmTitle: q('#confirmTitle'), confirmMessage: q('#confirmMessage'),
 };
@@ -62,27 +62,29 @@ function renderTools() {
 }
 
 function roleLabel(role, isRoot = false) { if (isRoot) return 'Administrador raiz'; return role === 'E3I_ADMIN' ? 'Administrador E3I' : 'Operador'; }
-function normalizeUser(user) { return { id: String(user.id || ''), name: String(user.name || ''), email: String(user.email || ''), role: user.role === 'E3I_ADMIN' ? 'E3I_ADMIN' : 'OPERATOR', status: user.status === 'SUSPENDED' ? 'SUSPENDED' : 'ACTIVE', mustChangePassword: user.mustChangePassword === true, createdAt: user.createdAt || '', updatedAt: user.updatedAt || '', isSelf: user.isSelf === true, isRoot: user.isRoot === true }; }
+function normalizeUser(user) { return { id: String(user.id || ''), name: String(user.name || ''), email: String(user.email || ''), role: user.role === 'E3I_ADMIN' ? 'E3I_ADMIN' : 'OPERATOR', status: user.status === 'SUSPENDED' ? 'SUSPENDED' : 'ACTIVE', mustChangePassword: user.mustChangePassword === true, createdAt: user.createdAt || '', updatedAt: user.updatedAt || '', isSelf: user.isSelf === true, isRoot: user.isRoot === true, organizationId: String(user.organizationId || ''), organizationName: String(user.organizationName || ''), linked: user.linked === true, membershipId: String(user.membershipId || ''), membershipRole: String(user.membershipRole || ''), membershipStatus: String(user.membershipStatus || '') }; }
 function userActionButton(label, className, handler, disabled = false) { const b = document.createElement('button'); b.type = 'button'; b.className = `btn ${className}`; b.textContent = label; b.disabled = disabled || state.userBusy; b.addEventListener('click', handler); return b; }
 function renderUsers() {
   updateMetrics(); els.usersTableBody.replaceChildren(); els.usersTableWrap.setAttribute('aria-busy', state.userBusy ? 'true' : 'false');
   const query = state.userFilter.trim().toLocaleLowerCase('pt-BR');
-  const visible = state.users.filter((user) => (state.userStatus === 'ALL' || user.status === state.userStatus) && (!query || [user.name, user.email, roleLabel(user.role, user.isRoot)].some((v) => String(v).toLocaleLowerCase('pt-BR').includes(query))));
-  if (!visible.length) { const row = document.createElement('tr'); const cell = document.createElement('td'); cell.colSpan = 5; cell.className = 'empty-state'; cell.textContent = state.users.length ? 'Nenhum usuário corresponde aos filtros.' : 'Nenhum usuário encontrado nesta organização.'; row.append(cell); els.usersTableBody.append(row); return; }
+  const visible = state.users.filter((user) => (state.userStatus === 'ALL' || user.status === state.userStatus) && (!query || [user.name, user.email, roleLabel(user.role, user.isRoot), user.organizationName, user.organizationId].some((v) => String(v).toLocaleLowerCase('pt-BR').includes(query))));
+  if (!visible.length) { const row = document.createElement('tr'); const cell = document.createElement('td'); cell.colSpan = 6; cell.className = 'empty-state'; cell.textContent = state.users.length ? 'Nenhum usuário corresponde aos filtros.' : 'Nenhum usuário encontrado nesta organização.'; row.append(cell); els.usersTableBody.append(row); return; }
   visible.forEach((user) => {
     const row = document.createElement('tr');
     const identity = document.createElement('td'); const name = document.createElement('span'); name.className = 'user-name'; name.textContent = user.name || 'Sem nome'; const email = document.createElement('span'); email.className = 'user-email'; email.textContent = user.email; identity.append(name, email);
     const role = document.createElement('td'); const roleCode = document.createElement('span'); roleCode.className = 'user-role'; roleCode.textContent = roleLabel(user.role, user.isRoot); role.append(roleCode);
+    const company = document.createElement('td'); const companyName = document.createElement('span'); companyName.className = 'user-company'; companyName.textContent = user.organizationName || state.organizationName || user.organizationId || state.organizationId || 'Não identificada'; const companyId = document.createElement('span'); companyId.className = 'user-company-id'; companyId.textContent = user.organizationId || state.organizationId || ''; company.append(companyName, companyId, badge(user.linked ? 'Vinculado' : 'Sem vínculo', user.linked ? 'active' : 'pending'));
     const status = document.createElement('td'); status.append(badge(user.status === 'ACTIVE' ? 'Ativo' : 'Suspenso', user.status === 'ACTIVE' ? 'active' : 'suspended'));
     const onboarding = document.createElement('td'); onboarding.append(badge(user.mustChangePassword ? 'Pendente' : 'Concluído', user.mustChangePassword ? 'pending' : 'neutral'));
     const actions = document.createElement('td'); actions.className = 'actions-col'; const bar = document.createElement('div'); bar.className = 'user-actions';
     const protectedAdmin = user.role === 'E3I_ADMIN' && !state.canDelegateAdmin;
+    if (!user.linked && state.canManageMemberships) bar.append(userActionButton('Vincular à empresa', 'btn-primary', () => linkUserToOrganization(user), false));
     bar.append(userActionButton('Editar', 'btn-ghost', () => openUserDialog(user), protectedAdmin));
     bar.append(userActionButton('Encerrar sessões', 'btn-ghost', () => userCommand(user, 'revoke-sessions', 'Encerrar sessões?', `Todas as sessões ativas de ${user.name || user.email} serão revogadas.`, false), protectedAdmin));
     bar.append(userActionButton('Forçar 1º acesso', 'btn-ghost', () => userCommand(user, 'force-first-login', 'Forçar novo primeiro acesso?', `O usuário ${user.name || user.email} precisará validar o e-mail e definir uma nova senha. As sessões atuais serão encerradas.`, true), protectedAdmin));
     if (user.status === 'ACTIVE') bar.append(userActionButton('Suspender', 'btn-revoke', () => userCommand(user, 'suspend', 'Suspender usuário?', `O acesso de ${user.name || user.email} será bloqueado e suas sessões serão revogadas. O histórico será preservado.`, true), user.isSelf || protectedAdmin || user.isRoot));
     else bar.append(userActionButton('Reativar', 'btn-primary', () => userCommand(user, 'reactivate', 'Reativar usuário?', `O usuário ${user.name || user.email} voltará a poder acessar o Portal conforme suas permissões.`, false), protectedAdmin || user.isRoot));
-    actions.append(bar); row.append(identity, role, status, onboarding, actions); els.usersTableBody.append(row);
+    actions.append(bar); row.append(identity, role, company, status, onboarding, actions); els.usersTableBody.append(row);
   });
 }
 
@@ -94,7 +96,7 @@ function validateUserForm() {
   return { name, email, role };
 }
 function openUserDialog(user = null) {
-  els.userId.value = user?.id || ''; els.userName.value = user?.name || ''; els.userEmail.value = user?.email || ''; els.userRole.value = user?.role || 'OPERATOR'; els.userRole.disabled = !state.canDelegateAdmin;
+  els.userId.value = user?.id || ''; els.userName.value = user?.name || ''; els.userEmail.value = user?.email || ''; els.userRole.value = user?.role || 'OPERATOR'; els.userRole.disabled = !state.canDelegateAdmin; if (els.userOrganization) els.userOrganization.value = user?.organizationName || state.organizationName || user?.organizationId || state.organizationId || 'Não identificada';
   els.userDialogEyebrow.textContent = user ? 'ALTERAR USUÁRIO' : 'NOVO USUÁRIO'; els.userDialogTitle.textContent = user ? 'Editar usuário' : 'Criar usuário'; els.userSaveButton.textContent = user ? 'Salvar alterações' : 'Criar usuário';
   els.userDialog.showModal(); setTimeout(() => els.userName.focus(), 0);
 }
@@ -105,6 +107,19 @@ async function saveUser() {
     els.userDialog.close(); await loadUsers(); setStatus(userId ? 'Usuário atualizado com sucesso.' : 'Usuário criado. O primeiro acesso deverá ser ativado pelo e-mail cadastrado.', 'success');
   } catch (error) { handleAdminError(error, 'Não foi possível salvar o usuário'); }
   finally { state.userBusy = false; els.userSaveButton.disabled = false; renderUsers(); }
+}
+async function linkUserToOrganization(user) {
+  if (state.userBusy || !state.canManageMemberships || user.linked) return;
+  const company = user.organizationName || state.organizationName || state.organizationId || 'a empresa ativa';
+  const confirmed = await confirmAction({ title: 'Vincular usuário à empresa?', message: `${user.name || user.email} será vinculado a ${company} e essa empresa passará a ser o contexto ativo da conta.`, danger: false });
+  if (!confirmed) return;
+  state.userBusy = true; renderUsers(); setStatus('Vinculando usuário à empresa…');
+  try {
+    await adminWrite(userEndpoint(user.id, 'link'));
+    await loadUsers();
+    setStatus(`Usuário vinculado a ${company} com sucesso.`, 'success');
+  } catch (error) { handleAdminError(error, 'Não foi possível vincular o usuário à empresa'); }
+  finally { state.userBusy = false; renderUsers(); }
 }
 async function userCommand(user, action, title, message, danger) {
   if (state.userBusy) return; const confirmed = await confirmAction({ title, message, danger }); if (!confirmed) return; state.userBusy = true; renderUsers(); setStatus('Executando ação administrativa…');
@@ -143,7 +158,7 @@ async function handleAccessChange(tool) {
   finally { state.busyToolId = ''; renderTools(); }
 }
 async function loadTools() { els.toolsGrid.setAttribute('aria-busy', 'true'); const payload = await api('/api/client-tools'); state.organizationId = payload.organizationId || ''; state.tools = Array.isArray(payload.tools) ? payload.tools : []; els.organizationId.textContent = state.organizationId || 'Não identificada'; renderTools(); els.toolsGrid.setAttribute('aria-busy', 'false'); if (!state.organizationId) throw new Error('O Portal não informou a organização ativa.'); }
-async function loadUsers() { if (!state.organizationId) return; els.usersTableWrap.setAttribute('aria-busy', 'true'); const payload = await api(usersEndpoint()); state.canDelegateAdmin = payload?.permissions?.canDelegateAdmin === true; state.users = Array.isArray(payload.users) ? payload.users.map(normalizeUser) : []; renderUsers(); els.usersTableWrap.setAttribute('aria-busy', 'false'); }
+async function loadUsers() { if (!state.organizationId) return; els.usersTableWrap.setAttribute('aria-busy', 'true'); const payload = await api(usersEndpoint()); state.canDelegateAdmin = payload?.permissions?.canDelegateAdmin === true; state.canManageMemberships = payload?.permissions?.canManageMemberships === true; state.organizationName = String(payload?.organization?.name || ''); state.users = Array.isArray(payload.users) ? payload.users.map(normalizeUser) : []; els.organizationId.textContent = state.organizationName ? `${state.organizationName} · ${state.organizationId}` : (state.organizationId || 'Não identificada'); renderUsers(); els.usersTableWrap.setAttribute('aria-busy', 'false'); }
 async function loadSettings({ announce = false } = {}) {
   if (!state.organizationId) return; state.settingsBusy = true; renderSettings(); if (announce) setStatus('Recarregando parâmetros…');
   try { const payload = await api(settingsEndpoint()); state.settings = normalizeSettings(payload.settings); state.settingsVersion = Number.isInteger(payload.version) ? payload.version : 0; state.settingsUpdatedAt = payload.updatedAt || ''; state.audit = Array.isArray(payload.audit) ? payload.audit : []; renderSettings(); renderAudit(); if (announce) setStatus('Parâmetros recarregados.', 'success'); }
