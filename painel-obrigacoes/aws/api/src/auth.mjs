@@ -53,6 +53,20 @@ export function resolveWorkspaceMembership(memberships, requestedWorkspaceId) {
   return membership;
 }
 
+export function resolveLegacyCognitoAuthorization(memberships, headers = {}) {
+  const requestedWorkspaceId = String(
+    headers?.['x-workspace-id'] || headers?.['X-Workspace-Id'] || '',
+  ).trim();
+  const membership = resolveWorkspaceMembership(memberships, requestedWorkspaceId);
+  return {
+    workspaceId: membership.workspaceId,
+    role: membership.role || 'member',
+    moduleGrants: Array.isArray(membership.module_grants)
+      ? membership.module_grants
+      : null,
+  };
+}
+
 
 function parseModuleGrantsClaim(value) {
   if (value === undefined || value === null || value === '') return [];
@@ -114,7 +128,32 @@ export async function authenticate(event, documentClient, tableName) {
   const userId = payload['custom:legacy_user_id'] || payload['cognito:username'] || payload.sub;
   const cognitoIssuer = String(process.env.AUTH_ISSUER || '').replace(/\/+$/, '');
   if (cognitoIssuer && issuer === cognitoIssuer) {
-    const authorization = resolveTokenAuthorization(payload, event.headers);
+    let authorization;
+    try {
+      authorization = resolveTokenAuthorization(payload, event.headers);
+    } catch (error) {
+      const legacyClaimGap = error?.statusCode === 401
+        && /Token sem (workspace|papel) autorizado\./.test(String(error.message || ''));
+      if (!legacyClaimGap) throw error;
+
+      // Compatibilidade segura durante rollout do Pre Token Generation:
+      // tokens emitidos antes do trigger podem não conter os claims derivados.
+      // Nessa janela, o workspace informado pelo cliente é apenas um seletor:
+      // papel e grants são relidos do MEMBER canônico no DynamoDB.
+      const result = await documentClient.send(new QueryCommand({
+        TableName: tableName,
+        IndexName: MEMBER_INDEX,
+        KeyConditionExpression: 'GSI1PK = :memberPk AND begins_with(GSI1SK, :workspacePrefix)',
+        ExpressionAttributeValues: {
+          ':memberPk': memberSk(userId),
+          ':workspacePrefix': 'WORKSPACE#',
+        },
+      }));
+      authorization = resolveLegacyCognitoAuthorization(
+        result.Items || [],
+        event.headers,
+      );
+    }
     return {
       userId,
       email: payload.email,

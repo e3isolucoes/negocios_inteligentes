@@ -40,6 +40,35 @@ test('rotaciona uma vez e revoga a família quando o token anterior é reutiliza
   assert.ok(cognitoCalls.includes('RevokeTokenCommand'));
 });
 
+test('preserva workspace do Portal durante rotação do cookie', async () => {
+  const records = new Map();
+  const key = input => input.Key?.PK || input.Item?.PK;
+  const ddb = { send: async command => {
+    const name = command.constructor.name;
+    if (name === 'PutCommand') { records.set(key(command.input), { ...command.input.Item }); return {}; }
+    if (name === 'GetCommand') return { Item: records.get(key(command.input)) };
+    if (name === 'UpdateCommand') {
+      const item = records.get(key(command.input));
+      if (command.input.ConditionExpression && item.status !== 'active') throw new Error('conditional');
+      if (command.input.UpdateExpression.includes('#status')) item.status = 'rotated'; else item.revoked = true;
+      return {};
+    }
+    throw new Error(`Comando inesperado: ${name}`);
+  } };
+  const cognito = { send: async command => command.constructor.name === 'AdminInitiateAuthCommand'
+    ? { AuthenticationResult: { IdToken: 'id-new', AccessToken: 'access-new' } }
+    : {} };
+  const first = await issueBrowserSession(
+    ddb, 'table', 'provider-refresh', 1_900_000_000_000,
+    { workspaceId: 'workspace-b', userId: 'user-1' },
+  );
+  const rotated = await rotateBrowserSession(
+    cognito, ddb, 'table', { userPoolId: 'pool', clientId: 'client' }, first, 1_900_000_001_000,
+  );
+  assert.equal(rotated.workspaceId, 'workspace-b');
+  assert.ok([...records.values()].some(record => record.status === 'active' && record.workspaceId === 'workspace-b'));
+});
+
 test('logout revoga no provedor e marca a família server-side', async () => {
   const commands = [];
   const item = { entityType: 'browser_session', familyId: 'family', refreshToken: 'provider-token', status: 'active' };

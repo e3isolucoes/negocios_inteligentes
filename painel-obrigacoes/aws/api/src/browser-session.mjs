@@ -20,19 +20,24 @@ export function readRefreshCookie(headers = {}) {
   return entry ? entry.slice(REFRESH_COOKIE.length + 1) : '';
 }
 
-async function putToken(documentClient, tableName, token, familyId, refreshToken, now) {
+async function putToken(documentClient, tableName, token, familyId, refreshToken, now, context = {}) {
   await documentClient.send(new PutCommand({
     TableName: tableName,
-    Item: { ...tokenKey(token), entityType: 'browser_session', familyId, refreshToken, status: 'active', expiresAt: Math.floor(now / 1000) + REFRESH_TTL_SECONDS },
+    Item: {
+      ...tokenKey(token), entityType: 'browser_session', familyId, refreshToken, status: 'active',
+      ...(context.workspaceId ? { workspaceId: context.workspaceId } : {}),
+      ...(context.userId ? { userId: context.userId } : {}),
+      expiresAt: Math.floor(now / 1000) + REFRESH_TTL_SECONDS,
+    },
     ConditionExpression: 'attribute_not_exists(PK)',
   }));
 }
 
-export async function issueBrowserSession(documentClient, tableName, refreshToken, now = Date.now()) {
+export async function issueBrowserSession(documentClient, tableName, refreshToken, now = Date.now(), context = {}) {
   const token = randomBytes(32).toString('base64url');
   const familyId = randomBytes(16).toString('base64url');
   await documentClient.send(new PutCommand({ TableName: tableName, Item: { ...familyKey(familyId), entityType: 'session_family', revoked: false, expiresAt: Math.floor(now / 1000) + REFRESH_TTL_SECONDS } }));
-  await putToken(documentClient, tableName, token, familyId, refreshToken, now);
+  await putToken(documentClient, tableName, token, familyId, refreshToken, now, context);
   return token;
 }
 
@@ -77,8 +82,16 @@ export async function rotateBrowserSession(cognito, documentClient, tableName, c
   if (!tokens.IdToken || !tokens.AccessToken) throw new Error('Cognito não renovou a sessão.');
   const nextRefresh = tokens.RefreshToken || item.refreshToken;
   const nextToken = randomBytes(32).toString('base64url');
-  await putToken(documentClient, tableName, nextToken, item.familyId, nextRefresh, now);
-  return { cookieToken: nextToken, access_token: tokens.IdToken, cognito_access_token: tokens.AccessToken };
+  await putToken(documentClient, tableName, nextToken, item.familyId, nextRefresh, now, {
+    workspaceId: item.workspaceId,
+    userId: item.userId,
+  });
+  return {
+    cookieToken: nextToken,
+    access_token: tokens.IdToken,
+    cognito_access_token: tokens.AccessToken,
+    workspaceId: item.workspaceId || null,
+  };
 }
 
 export async function revokeBrowserSession(cognito, documentClient, tableName, clientId, token) {

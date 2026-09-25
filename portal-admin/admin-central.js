@@ -32,7 +32,7 @@ function userEndpoint(userId, action = '') { return organizationPath(`/users/${e
 
 async function readPayload(response) { const type = response.headers.get('content-type') || ''; return type.includes('application/json') ? response.json().catch(() => ({})) : {}; }
 async function api(path, options = {}) {
-  const response = await fetch(path, { credentials: 'same-origin', headers: { accept: 'application/json', ...(options.headers || {}) }, ...options });
+  const response = await fetch(path, { credentials: 'same-origin', cache: 'no-store', headers: { accept: 'application/json', ...(options.headers || {}) }, ...options });
   const payload = await readPayload(response);
   if (!response.ok) { const error = new Error(payload.error || payload.message || `HTTP ${response.status}`); error.status = response.status; error.code = payload.code || ''; error.payload = payload; throw error; }
   return payload;
@@ -366,10 +366,34 @@ function confirmAction({ title, message, danger = false }) { if (!els.confirmDia
 
 async function handleAccessChange(tool) {
   if (!state.organizationId || !tool.id || state.busyToolId) return;
-  if (tool.granted && !(await confirmAction({ title: 'Revogar acesso?', message: `A organização ativa deixará de ter acesso a “${toolLabel(tool)}”.`, danger: true }))) return;
-  state.busyToolId = tool.id; setStatus(tool.granted ? 'Revogando acesso…' : 'Liberando acesso…'); renderTools();
-  try { await api(organizationPath(`/client-tools/${encodeURIComponent(tool.id)}`), { method: tool.granted ? 'DELETE' : 'PUT' }); tool.granted = !tool.granted; setStatus(tool.granted ? `Acesso a “${toolLabel(tool)}” liberado.` : `Acesso a “${toolLabel(tool)}” revogado.`, 'success'); }
-  catch (error) { handleAdminError(error, 'Não foi possível alterar o acesso'); }
+  if (state.organizationId !== state.activeOrganizationId) {
+    setStatus('Defina esta empresa como ativa antes de alterar o acesso às ferramentas.', 'warning');
+    return;
+  }
+  const requestedGrant = !tool.granted;
+  if (!requestedGrant && !(await confirmAction({ title: 'Revogar acesso?', message: `A organização ativa deixará de ter acesso a “${toolLabel(tool)}”.`, danger: true }))) return;
+  state.busyToolId = tool.id; setStatus(requestedGrant ? 'Liberando acesso…' : 'Revogando acesso…'); renderTools();
+  try {
+    await api(organizationPath(`/client-tools/${encodeURIComponent(tool.id)}`), {
+      method: requestedGrant ? 'PUT' : 'DELETE',
+      headers: { 'x-e3i-admin-request': '1' },
+      cache: 'no-store',
+    });
+    await loadTools();
+    const persisted = state.tools.find((candidate) => candidate.id === tool.id);
+    if (!persisted || Boolean(persisted.granted) !== requestedGrant) {
+      throw Object.assign(
+        new Error('O servidor não confirmou a alteração de acesso. Recarregue os dados e tente novamente.'),
+        { status: 409 },
+      );
+    }
+    setStatus(
+      requestedGrant
+        ? `Acesso a “${toolLabel(tool)}” liberado e confirmado pelo servidor.`
+        : `Acesso a “${toolLabel(tool)}” revogado e confirmado pelo servidor.`,
+      'success',
+    );
+  } catch (error) { handleAdminError(error, 'Não foi possível alterar o acesso'); }
   finally { state.busyToolId = ''; renderTools(); }
 }
 async function loadTools() {

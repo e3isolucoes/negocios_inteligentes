@@ -1,4 +1,4 @@
-import { getAccessToken, refreshAccessToken } from './auth.js';
+import { getAccessToken, getActiveWorkspaceId, refreshAccessToken } from './auth.js';
 import { STATE } from '../state.js';
 
 const sleep = (milliseconds) => new Promise((resolve) => setTimeout(resolve, milliseconds));
@@ -32,6 +32,7 @@ export async function awsRequest(path, { method = 'GET', body } = {}) {
   const API_BASE = awsApiBase();
   if (!API_BASE) throw new Error('Backend AWS ainda não foi configurado.');
   let accessToken = await getAccessToken();
+  let workspaceId = STATE.profile?.workspace_id || await getActiveWorkspaceId();
   if (!accessToken) {
     throw Object.assign(new Error('Sua sessão expirou. Entre novamente.'), { status: 401, code: 'session_expired' });
   }
@@ -45,7 +46,7 @@ export async function awsRequest(path, { method = 'GET', body } = {}) {
         headers: {
           authorization: `Bearer ${accessToken}`,
           'content-type': 'application/json',
-          ...(STATE.profile?.workspace_id ? { 'x-workspace-id': STATE.profile.workspace_id } : {})
+          ...(workspaceId ? { 'x-workspace-id': workspaceId } : {})
         },
         body: body === undefined ? undefined : JSON.stringify(body),
         credentials: 'omit',
@@ -65,6 +66,7 @@ export async function awsRequest(path, { method = 'GET', body } = {}) {
       authRetried = true;
       try {
         accessToken = await refreshAccessToken();
+        workspaceId = STATE.profile?.workspace_id || await getActiveWorkspaceId();
       } catch (cause) {
         throw Object.assign(
           new Error('Sua sessão expirou. Entre novamente.'),

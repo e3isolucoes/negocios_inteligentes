@@ -5,6 +5,7 @@ import {
   authConfigurations,
   normalizeSupabaseIssuer,
   requireModuleGrant,
+  resolveLegacyCognitoAuthorization,
   resolveTokenAuthorization,
   resolveWorkspaceMembership,
 } from '../src/auth.mjs';
@@ -111,6 +112,35 @@ test('tentativa de usar workspaceId da etiqueta é negada antes de ler RECORD se
     (error) => error.statusCode === 403,
   );
   assert.equal(recordReadAttempted, false);
+});
+
+test('fallback Cognito usa x-workspace-id somente após validar MEMBER canônico', () => {
+  const memberships = [
+    {
+      PK: 'WORKSPACE#workspace-a', SK: 'MEMBER#user-1',
+      workspaceId: 'workspace-a', userId: 'user-1',
+      active: true, entityType: 'member', role: 'member',
+      module_grants: ['obrigacoes'],
+    },
+    {
+      PK: 'WORKSPACE#workspace-b', SK: 'MEMBER#user-1',
+      workspaceId: 'workspace-b', userId: 'user-1',
+      active: true, entityType: 'member', role: 'manager',
+      module_grants: ['obrigacoes', 'administracao'],
+    },
+  ];
+
+  assert.deepEqual(
+    resolveLegacyCognitoAuthorization(
+      memberships,
+      { 'x-workspace-id': 'workspace-b' },
+    ),
+    {
+      workspaceId: 'workspace-b',
+      role: 'manager',
+      moduleGrants: ['obrigacoes', 'administracao'],
+    },
+  );
 });
 
 test('token forjado com workspace divergente do x-workspace-id é rejeitado', async () => {

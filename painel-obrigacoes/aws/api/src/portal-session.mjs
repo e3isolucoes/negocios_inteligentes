@@ -93,5 +93,11 @@ export async function consumePortalSession(documentClient, tableName, code, now 
   if (!item || item.entityType !== 'portal_session' || item.toolId !== TOOL_ID || item.environment !== APP_ENV || item.expiresAt < Math.floor(now / 1000)) {
     throw Object.assign(new Error('Código de acesso inválido ou expirado.'), { statusCode: 401 });
   }
-  return { access_token: item.idToken, cognito_access_token: item.accessToken, refresh_token: item.refreshToken };
+  return {
+    access_token: item.idToken,
+    cognito_access_token: item.accessToken,
+    refresh_token: item.refreshToken,
+    userId: item.userId,
+    workspaceId: item.workspaceId,
+  };
 }

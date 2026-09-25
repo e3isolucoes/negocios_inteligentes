@@ -55,7 +55,14 @@ function decodeJwt(token) {
 function cognitoSession(tokens) {
   if (!tokens?.IdToken || !tokens?.AccessToken) return null;
   const claims = decodeJwt(tokens.IdToken);
-  return { access_token: tokens.IdToken, cognito_access_token: tokens.AccessToken, refresh_token: tokens.RefreshToken, expires_at: claims.exp, user: { id: claims['custom:legacy_user_id'] || claims['cognito:username'] || claims.sub, email: claims.email } };
+  return {
+    access_token: tokens.IdToken,
+    cognito_access_token: tokens.AccessToken,
+    refresh_token: tokens.RefreshToken,
+    expires_at: claims.exp,
+    workspace_id: tokens.workspaceId || tokens.workspace_id || claims['custom:workspace_id'] || claims['custom:active_workspace_id'] || null,
+    user: { id: claims['custom:legacy_user_id'] || claims['cognito:username'] || claims.sub, email: claims.email },
+  };
 }
 function portalCognitoSession(tokens) {
   const idToken = tokens?.access_token;
@@ -69,6 +76,7 @@ function portalCognitoSession(tokens) {
     cognito_access_token: tokens.cognito_access_token || null,
     refresh_token: tokens.refresh_token || null,
     expires_at: claims.exp,
+    workspace_id: tokens.workspaceId || tokens.workspace_id || claims['custom:workspace_id'] || claims['custom:active_workspace_id'] || null,
     user: {
       id: claims['custom:legacy_user_id'] || claims['cognito:username'] || claims.sub,
       email: claims.email,
@@ -293,3 +301,4 @@ export async function refreshAccessToken() {
 }
 
 export async function getAccessToken() { return (await getSession()).data.session?.access_token || null; }
+export async function getActiveWorkspaceId() { return (await getSession()).data.session?.workspace_id || null; }
