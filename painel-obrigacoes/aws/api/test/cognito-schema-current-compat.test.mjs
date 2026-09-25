@@ -13,16 +13,19 @@ test('template preserva atributo Cognito legado e mantém arquitetura atual', as
   assert.match(template, /PreTokenGenerationConfig:/);
 });
 
-test('autorização atual deriva workspace de claims/membership, não do atributo legado', async () => {
+test('autorização atual preserva claims canônicos e usa atributo legado somente como seletor compatível', async () => {
   const [auth, workspaceAccess] = await Promise.all([
     readFile(new URL('../src/auth.mjs', import.meta.url), 'utf8'),
     readFile(new URL('../src/workspace-access.mjs', import.meta.url), 'utf8'),
   ]);
 
   assert.match(auth, /custom:workspace_id/);
+  assert.match(auth, /custom:active_workspace_id/);
   assert.match(auth, /resolveWorkspaceMembership/);
+  assert.match(auth, /resolveLegacyCognitoAuthorization/);
   assert.match(auth, /MEMBER#/);
-  assert.doesNotMatch(auth, /active_workspace_id/);
+  assert.match(auth, /MEMBER_INDEX/);
+  assert.match(auth, /papel e grants são relidos do MEMBER canônico|role: membership\.role/);
   assert.match(workspaceAccess, /access_status === 'suspended'/);
   assert.match(workspaceAccess, /access_status === 'trial'/);
   assert.match(workspaceAccess, /trial_ends_at/);
