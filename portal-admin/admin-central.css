@@ -169,6 +169,8 @@ a { color: inherit; }
 .user-name { display: block; font-weight: 800; color: var(--navy); }
 .user-email { display: block; margin-top: 3px; color: var(--ink-soft); font-size: .84rem; overflow-wrap: anywhere; }
 .user-role { font-family: ui-monospace, "IBM Plex Mono", monospace; font-size: .82rem; }
+.user-company { display: block; font-weight: 750; color: var(--navy); }
+.user-company-id { display: block; margin: 3px 0 7px; color: var(--ink-soft); font: 600 .72rem ui-monospace, "IBM Plex Mono", monospace; overflow-wrap: anywhere; }
 .user-actions { display: flex; flex-wrap: wrap; gap: 6px; justify-content: flex-end; }
 .user-actions .btn { min-height: 36px; padding: 7px 10px; font-size: .8rem; }
 .actions-col { text-align: right !important; }
