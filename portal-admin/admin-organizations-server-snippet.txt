@@ -318,7 +318,9 @@ app.put('/api/admin/organizations/:organizationId/members/:userId', (req, res) =
   if (req.body?.makeActive === true) {
     user.tenantId = tenant.id;
     user.organizationId = tenant.id;
+    user.activeOrganizationId = tenant.id;
     user.updatedAt = now;
+    e3iAdminOrganizationsSyncLiveContext(user, tenant.id);
   }
   e3iAdminOrganizationsAudit(principal, 'ORGANIZATION_MEMBER_LINKED', tenant.id, `user=${user.id || user.userId};active=${req.body?.makeActive === true}`);
   e3iAdminOrganizationsWriteDataset(principal.dataset);
