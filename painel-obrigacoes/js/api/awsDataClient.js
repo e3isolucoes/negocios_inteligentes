@@ -32,7 +32,7 @@ export async function awsRequest(path, { method = 'GET', body } = {}) {
   const API_BASE = awsApiBase();
   if (!API_BASE) throw new Error('Backend AWS ainda não foi configurado.');
   let accessToken = await getAccessToken();
-  let workspaceId = STATE.profile?.workspace_id || await getActiveWorkspaceId();
+  let workspaceId = await getActiveWorkspaceId() || STATE.profile?.workspace_id;
   if (!accessToken) {
     throw Object.assign(new Error('Sua sessão expirou. Entre novamente.'), { status: 401, code: 'session_expired' });
   }
@@ -66,7 +66,7 @@ export async function awsRequest(path, { method = 'GET', body } = {}) {
       authRetried = true;
       try {
         accessToken = await refreshAccessToken();
-        workspaceId = STATE.profile?.workspace_id || await getActiveWorkspaceId();
+        workspaceId = await getActiveWorkspaceId() || STATE.profile?.workspace_id;
       } catch (cause) {
         throw Object.assign(
           new Error('Sua sessão expirou. Entre novamente.'),
