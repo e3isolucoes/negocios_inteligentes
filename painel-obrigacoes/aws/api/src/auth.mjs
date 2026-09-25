@@ -53,23 +53,11 @@ export function resolveWorkspaceMembership(memberships, requestedWorkspaceId) {
   return membership;
 }
 
-export function resolveLegacyCognitoAuthorization(memberships, payload = {}, headers = {}) {
-  const headerWorkspaceId = String(
+export function resolveLegacyCognitoAuthorization(memberships, headers = {}) {
+  const requestedWorkspaceId = String(
     headers?.['x-workspace-id'] || headers?.['X-Workspace-Id'] || '',
   ).trim();
-  const activeWorkspaceId = String(payload['custom:active_workspace_id'] || '').trim();
-
-  if (headerWorkspaceId && activeWorkspaceId && headerWorkspaceId !== activeWorkspaceId) {
-    throw Object.assign(
-      new Error('Workspace do cabeçalho diverge da sessão ativa.'),
-      { statusCode: 403 },
-    );
-  }
-
-  const membership = resolveWorkspaceMembership(
-    memberships,
-    headerWorkspaceId || activeWorkspaceId,
-  );
+  const membership = resolveWorkspaceMembership(memberships, requestedWorkspaceId);
   return {
     workspaceId: membership.workspaceId,
     role: membership.role || 'member',
@@ -149,10 +137,9 @@ export async function authenticate(event, documentClient, tableName) {
       if (!legacyClaimGap) throw error;
 
       // Compatibilidade segura durante rollout do Pre Token Generation:
-      // tokens emitidos pelo pool antes do trigger podem não conter os claims
-      // derivados, mas ainda carregam o seletor de workspace gravado pelo Portal.
-      // O seletor nunca concede acesso sozinho: papel e grants são relidos do
-      // MEMBER canônico no DynamoDB antes de autorizar qualquer operação.
+      // tokens emitidos antes do trigger podem não conter os claims derivados.
+      // Nessa janela, o workspace informado pelo cliente é apenas um seletor:
+      // papel e grants são relidos do MEMBER canônico no DynamoDB.
       const result = await documentClient.send(new QueryCommand({
         TableName: tableName,
         IndexName: MEMBER_INDEX,
@@ -164,7 +151,6 @@ export async function authenticate(event, documentClient, tableName) {
       }));
       authorization = resolveLegacyCognitoAuthorization(
         result.Items || [],
-        payload,
         event.headers,
       );
     }
