@@ -21,6 +21,7 @@ test('restaura no painel a sessão Cognito já autenticada no portal', async () 
   const access_token = jwt({
     iss: 'https://cognito-idp.sa-east-1.amazonaws.com/pool', aud: 'client', token_use: 'id',
     exp: Math.floor(Date.now() / 1000) + 3600, sub: 'user-1', email: 'usuario@empresa.com',
+    'custom:active_workspace_id': 'workspace-empresa',
   });
 
   const restored = await setSession({ access_token, cognito_access_token: 'api-token', refresh_token: 'refresh' });
@@ -28,6 +29,7 @@ test('restaura no painel a sessão Cognito já autenticada no portal', async () 
   assert.equal(restored.error, null);
   assert.equal(restored.data.session.user.id, 'user-1');
   assert.equal(restored.data.session.user.email, 'usuario@empresa.com');
+  assert.equal(restored.data.session.workspace_id, 'workspace-empresa');
   assert.equal((await getSession()).data.session.cognito_access_token, 'api-token');
   delete globalThis.E3I_CONFIG;
   delete globalThis.localStorage;
