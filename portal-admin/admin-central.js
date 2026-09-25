@@ -4,7 +4,8 @@ const SAFE_DEFAULTS = Object.freeze({
 });
 
 const state = {
-  organizationId: '', tools: [], filter: '', busyToolId: '',
+  organizationId: '', activeOrganizationId: '', organizations: [], organizationPermissions: {}, companyFilter: '', companyBusy: false,
+  tools: [], filter: '', busyToolId: '',
   users: [], userFilter: '', userStatus: 'ALL', userBusy: false, canDelegateAdmin: false, canManageMemberships: false, organizationName: '',
   settings: structuredClone(SAFE_DEFAULTS), settingsVersion: 0, settingsUpdatedAt: '', audit: [], settingsBusy: false,
 };
@@ -12,7 +13,8 @@ const state = {
 const q = (selector) => document.querySelector(selector);
 const qa = (selector) => [...document.querySelectorAll(selector)];
 const els = {
-  organizationId: q('#organizationId'), settingsVersion: q('#settingsVersion'), metricUsers: q('#metricUsers'), metricTotal: q('#metricTotal'), metricGranted: q('#metricGranted'), metricIntelligence: q('#metricIntelligence'), metricIntelligenceHint: q('#metricIntelligenceHint'), metricUpdated: q('#metricUpdated'), globalStatus: q('#globalStatus'),
+  organizationId: q('#organizationId'), organizationSelect: q('#organizationSelect'), activeOrganizationHint: q('#activeOrganizationHint'), activateOrganizationButton: q('#activateOrganizationButton'), organizationContextText: q('#organizationContextText'), settingsVersion: q('#settingsVersion'), metricUsers: q('#metricUsers'), metricTotal: q('#metricTotal'), metricGranted: q('#metricGranted'), metricIntelligence: q('#metricIntelligence'), metricIntelligenceHint: q('#metricIntelligenceHint'), metricUpdated: q('#metricUpdated'), globalStatus: q('#globalStatus'),
+  companiesTableBody: q('#companiesTableBody'), companiesTableWrap: q('#companiesTableWrap'), companySearchInput: q('#companySearchInput'), createOrganizationButton: q('#createOrganizationButton'), organizationDialog: q('#organizationDialog'), organizationForm: q('#organizationForm'), organizationDialogEyebrow: q('#organizationDialogEyebrow'), organizationDialogTitle: q('#organizationDialogTitle'), organizationFormId: q('#organizationFormId'), organizationLegalName: q('#organizationLegalName'), organizationTradeName: q('#organizationTradeName'), organizationDocument: q('#organizationDocument'), organizationStatus: q('#organizationStatus'), organizationSaveButton: q('#organizationSaveButton'),
   toolsGrid: q('#toolsGrid'), searchInput: q('#searchInput'), tabs: qa('[data-tab]'), panels: qa('[data-panel]'),
   usersTableBody: q('#usersTableBody'), usersTableWrap: q('#usersTableWrap'), userSearchInput: q('#userSearchInput'), userStatusFilter: q('#userStatusFilter'), createUserButton: q('#createUserButton'), userDialog: q('#userDialog'), userForm: q('#userForm'), userDialogEyebrow: q('#userDialogEyebrow'), userDialogTitle: q('#userDialogTitle'), userId: q('#userId'), userName: q('#userName'), userEmail: q('#userEmail'), userRole: q('#userRole'), userOrganization: q('#userOrganization'), userSaveButton: q('#userSaveButton'),
   settingsForm: q('#settingsForm'), saveSettings: q('#saveSettings'), reloadSettings: q('#reloadSettings'), intelligenceEnabled: q('#intelligenceEnabled'), ingestionEnabled: q('#ingestionEnabled'), agentMode: q('#agentMode'), requireHumanApproval: q('#requireHumanApproval'), allowSensitivePersonalData: q('#allowSensitivePersonalData'), defaultRetentionClass: q('#defaultRetentionClass'), mappingPurposeId: q('#mappingPurposeId'), auditLevel: q('#auditLevel'), savingValidationRequired: q('#savingValidationRequired'), auditCount: q('#auditCount'), auditList: q('#auditList'),
@@ -23,7 +25,7 @@ function setStatus(message = '', tone = '') { els.globalStatus.textContent = mes
 function formatDate(value) { if (!value) return 'Nunca'; const d = new Date(value); if (Number.isNaN(d.getTime())) return 'Indisponível'; return new Intl.DateTimeFormat('pt-BR', { dateStyle: 'short', timeStyle: 'short' }).format(d); }
 function toolLabel(tool) { return tool.name || tool.title || tool.label || tool.id || 'Ferramenta'; }
 function toolDescription(tool) { return tool.description || tool.summary || 'Ferramenta disponível no catálogo do Portal E3I.'; }
-function organizationPath(suffix) { if (!state.organizationId) throw new Error('Organização ativa não identificada'); return `/api/admin/organizations/${encodeURIComponent(state.organizationId)}${suffix}`; }
+function organizationPath(suffix) { if (!state.organizationId) throw new Error('Empresa em gestão não identificada'); return `/api/admin/organizations/${encodeURIComponent(state.organizationId)}${suffix}`; }
 function settingsEndpoint() { return organizationPath('/central-settings'); }
 function usersEndpoint() { return organizationPath('/users'); }
 function userEndpoint(userId, action = '') { return organizationPath(`/users/${encodeURIComponent(userId)}${action ? `/${action}` : ''}`); }
@@ -51,6 +53,13 @@ function badge(text, tone = 'neutral') { const el = document.createElement('span
 function makeAccessButton(tool) { const button = document.createElement('button'); button.type = 'button'; button.className = `btn ${tool.granted ? 'btn-revoke' : 'btn-primary'}`; button.textContent = state.busyToolId === tool.id ? 'Salvando…' : (tool.granted ? 'Revogar acesso' : 'Liberar acesso'); button.disabled = Boolean(state.busyToolId); button.addEventListener('click', () => handleAccessChange(tool)); return button; }
 function renderTools() {
   updateMetrics(); els.toolsGrid.replaceChildren(); els.toolsGrid.setAttribute('aria-busy', state.busyToolId ? 'true' : 'false');
+  if (state.organizationId && state.activeOrganizationId && state.organizationId !== state.activeOrganizationId) {
+    const warning = document.createElement('div');
+    warning.className = 'empty-state access-context-warning';
+    warning.textContent = 'A empresa em gestão não é a empresa ativa da sessão. Torne esta empresa ativa para visualizar, conceder ou revogar ferramentas com segurança.';
+    els.toolsGrid.append(warning);
+    return;
+  }
   const query = state.filter.trim().toLocaleLowerCase('pt-BR');
   const visible = state.tools.filter((tool) => !query || [toolLabel(tool), tool.id, toolDescription(tool)].filter(Boolean).some((v) => String(v).toLocaleLowerCase('pt-BR').includes(query)));
   if (!visible.length) { const empty = document.createElement('div'); empty.className = 'empty-state'; empty.textContent = state.tools.length ? 'Nenhuma ferramenta corresponde à busca.' : 'Nenhuma ferramenta está disponível para este contexto.'; els.toolsGrid.append(empty); return; }
@@ -59,6 +68,192 @@ function renderTools() {
     const content = document.createElement('div'); const head = document.createElement('div'); head.className = 'tool-head'; const identity = document.createElement('div'); const title = document.createElement('h3'); title.className = 'tool-name'; title.textContent = toolLabel(tool); const id = document.createElement('code'); id.className = 'tool-id'; id.textContent = tool.id || 'sem-identificador'; identity.append(title, id); head.append(identity, badge(tool.granted ? 'Acesso liberado' : 'Acesso bloqueado', tool.granted ? 'granted' : 'blocked')); const desc = document.createElement('p'); desc.className = 'tool-description'; desc.textContent = toolDescription(tool); content.append(head, desc);
     const footer = document.createElement('div'); footer.className = 'tool-footer'; const copy = document.createElement('span'); copy.textContent = tool.granted ? 'Usuários elegíveis da organização podem abrir a ferramenta.' : 'A ferramenta não está concedida para esta organização.'; footer.append(copy, makeAccessButton(tool)); card.append(content, footer); els.toolsGrid.append(card);
   });
+}
+
+
+function organizationLabel(organization) {
+  return organization?.tradeName || organization?.legalName || organization?.id || 'Empresa';
+}
+function currentOrganization() {
+  return state.organizations.find((item) => item.id === state.organizationId) || null;
+}
+function renderOrganizationContext() {
+  const selected = currentOrganization();
+  const active = state.organizations.find((item) => item.id === state.activeOrganizationId) || null;
+  const selectedLabel = selected ? organizationLabel(selected) : 'Nenhuma empresa selecionada';
+  const activeLabel = active ? organizationLabel(active) : (state.activeOrganizationId || 'não identificada');
+  els.organizationId.textContent = selected ? `${selectedLabel} · ${selected.id}` : 'Não identificada';
+  els.activeOrganizationHint.textContent = `Empresa ativa da sessão: ${activeLabel}`;
+  els.organizationContextText.textContent = state.organizationId === state.activeOrganizationId
+    ? `Você está administrando a mesma empresa usada pela sessão: ${selectedLabel}.`
+    : `Você está administrando ${selectedLabel}, mas a sessão ainda usa ${activeLabel}. Torne a empresa em gestão ativa antes de conceder ferramentas ou testar o acesso.`;
+  els.activateOrganizationButton.disabled = !state.organizationId || state.organizationId === state.activeOrganizationId || state.companyBusy;
+}
+function renderOrganizationSelect() {
+  els.organizationSelect.replaceChildren();
+  state.organizations.forEach((organization) => {
+    const option = document.createElement('option');
+    option.value = organization.id;
+    option.textContent = `${organizationLabel(organization)} · ${organization.id}`;
+    option.selected = organization.id === state.organizationId;
+    els.organizationSelect.append(option);
+  });
+  els.organizationSelect.disabled = state.organizations.length < 2 || state.companyBusy;
+  renderOrganizationContext();
+}
+function companyActionButton(label, className, handler, disabled = false) {
+  const button = document.createElement('button');
+  button.type = 'button';
+  button.className = `btn ${className}`;
+  button.textContent = label;
+  button.disabled = disabled || state.companyBusy;
+  button.addEventListener('click', handler);
+  return button;
+}
+function renderOrganizations() {
+  els.companiesTableBody.replaceChildren();
+  els.companiesTableWrap.setAttribute('aria-busy', state.companyBusy ? 'true' : 'false');
+  const query = state.companyFilter.trim().toLocaleLowerCase('pt-BR');
+  const visible = state.organizations.filter((organization) =>
+    !query || [organization.tradeName, organization.legalName, organization.document, organization.id]
+      .some((value) => String(value || '').toLocaleLowerCase('pt-BR').includes(query))
+  );
+  if (!visible.length) {
+    const row = document.createElement('tr');
+    const cell = document.createElement('td');
+    cell.colSpan = 6;
+    cell.className = 'empty-state';
+    cell.textContent = 'Nenhuma empresa encontrada.';
+    row.append(cell);
+    els.companiesTableBody.append(row);
+    renderOrganizationSelect();
+    return;
+  }
+  visible.forEach((organization) => {
+    const row = document.createElement('tr');
+    if (organization.id === state.organizationId) row.classList.add('is-selected-row');
+
+    const company = document.createElement('td');
+    const name = document.createElement('span'); name.className = 'user-name'; name.textContent = organizationLabel(organization);
+    const legal = document.createElement('span'); legal.className = 'user-email'; legal.textContent = organization.legalName || organization.id;
+    company.append(name, legal);
+
+    const documentCell = document.createElement('td'); documentCell.textContent = organization.document || '—';
+    const users = document.createElement('td'); users.textContent = String(organization.usersCount || 0);
+    const admins = document.createElement('td'); admins.textContent = String(organization.adminCount || 0);
+    const status = document.createElement('td'); status.append(badge(organization.status === 'ACTIVE' ? 'Ativa' : 'Suspensa', organization.status === 'ACTIVE' ? 'active' : 'suspended'));
+
+    const actions = document.createElement('td'); actions.className = 'actions-col';
+    const bar = document.createElement('div'); bar.className = 'user-actions';
+    bar.append(companyActionButton(
+      organization.id === state.organizationId ? 'Em gestão' : 'Administrar',
+      organization.id === state.organizationId ? 'btn-secondary' : 'btn-primary',
+      () => selectOrganization(organization.id),
+      organization.id === state.organizationId,
+    ));
+    if (organization.id !== state.activeOrganizationId) {
+      bar.append(companyActionButton('Tornar ativa', 'btn-ghost', () => activateOrganization(organization.id), organization.status !== 'ACTIVE'));
+    } else {
+      bar.append(badge('Sessão ativa', 'granted'));
+    }
+    if (state.organizationPermissions.canCreateOrganizations) {
+      bar.append(companyActionButton('Editar', 'btn-ghost', () => openOrganizationDialog(organization)));
+    }
+    actions.append(bar);
+    row.append(company, documentCell, users, admins, status, actions);
+    els.companiesTableBody.append(row);
+  });
+  renderOrganizationSelect();
+  els.createOrganizationButton.hidden = state.organizationPermissions.canCreateOrganizations !== true;
+}
+function validateOrganizationForm() {
+  const legalName = els.organizationLegalName.value.trim();
+  const tradeName = els.organizationTradeName.value.trim();
+  const document = els.organizationDocument.value.replace(/\D/g, '');
+  const status = els.organizationStatus.value;
+  if (!legalName || legalName.length > 180) throw new Error('Informe uma razão social válida.');
+  if (!tradeName || tradeName.length > 180) throw new Error('Informe um nome válido para a empresa.');
+  if (document && (document.length < 11 || document.length > 14)) throw new Error('Informe um CNPJ/CPF empresarial válido.');
+  if (!['ACTIVE', 'SUSPENDED'].includes(status)) throw new Error('Status da empresa inválido.');
+  return { legalName, tradeName, document, status };
+}
+function openOrganizationDialog(organization = null) {
+  els.organizationFormId.value = organization?.id || '';
+  els.organizationLegalName.value = organization?.legalName || '';
+  els.organizationTradeName.value = organization?.tradeName || '';
+  els.organizationDocument.value = organization?.document || '';
+  els.organizationStatus.value = organization?.status || 'ACTIVE';
+  els.organizationStatus.disabled = !organization;
+  els.organizationDialogEyebrow.textContent = organization ? 'ALTERAR EMPRESA' : 'NOVA EMPRESA';
+  els.organizationDialogTitle.textContent = organization ? 'Editar empresa' : 'Cadastrar empresa';
+  els.organizationSaveButton.textContent = organization ? 'Salvar alterações' : 'Cadastrar empresa';
+  els.organizationDialog.showModal();
+}
+async function saveOrganization() {
+  if (state.companyBusy) return;
+  let input;
+  try { input = validateOrganizationForm(); } catch (error) { setStatus(error.message, 'error'); return; }
+  const organizationId = els.organizationFormId.value.trim();
+  state.companyBusy = true; renderOrganizations(); setStatus(organizationId ? 'Salvando empresa…' : 'Cadastrando empresa…');
+  try {
+    const payload = await adminWrite(organizationId ? `/api/admin/organizations/${encodeURIComponent(organizationId)}` : '/api/admin/organizations', {
+      method: organizationId ? 'PUT' : 'POST',
+      body: input,
+    });
+    els.organizationDialog.close();
+    await loadOrganizations(payload?.organization?.id || organizationId || '');
+    setStatus(organizationId ? 'Empresa atualizada com sucesso.' : 'Empresa cadastrada com sucesso.', 'success');
+  } catch (error) { handleAdminError(error, 'Não foi possível salvar a empresa'); }
+  finally { state.companyBusy = false; renderOrganizations(); }
+}
+async function selectOrganization(organizationId) {
+  if (!organizationId || organizationId === state.organizationId) return;
+  state.organizationId = organizationId;
+  state.organizationName = organizationLabel(currentOrganization());
+  renderOrganizations();
+  state.tools = [];
+  renderTools();
+  setStatus('Carregando dados da empresa selecionada…');
+  await Promise.all([loadUsers(), loadSettings()]);
+  if (state.organizationId === state.activeOrganizationId) await loadTools();
+  else {
+    renderTools();
+    setStatus('Empresa selecionada. Torne-a ativa antes de alterar ou testar acessos de ferramentas.', 'warning');
+  }
+}
+async function activateOrganization(organizationId = state.organizationId) {
+  if (!organizationId || state.companyBusy) return;
+  const organization = state.organizations.find((item) => item.id === organizationId);
+  const confirmed = await confirmAction({
+    title: 'Tornar esta empresa ativa?',
+    message: `O Portal passará a usar “${organizationLabel(organization)}” como contexto principal deste administrador. Isso alinha concessões e validações de acesso.`,
+    danger: false,
+  });
+  if (!confirmed) return;
+  state.companyBusy = true; renderOrganizations(); setStatus('Atualizando empresa ativa da sessão…');
+  try {
+    await adminWrite(`/api/admin/organizations/${encodeURIComponent(organizationId)}/activate`, { method: 'POST' });
+    state.activeOrganizationId = organizationId;
+    state.organizationId = organizationId;
+    renderOrganizations();
+    await Promise.all([loadUsers(), loadSettings(), loadTools()]);
+    setStatus('Empresa ativa atualizada. As concessões de ferramentas agora serão feitas neste contexto.', 'success');
+  } catch (error) { handleAdminError(error, 'Não foi possível alterar a empresa ativa'); }
+  finally { state.companyBusy = false; renderOrganizations(); }
+}
+async function loadOrganizations(preferredOrganizationId = '') {
+  els.companiesTableWrap.setAttribute('aria-busy', 'true');
+  const payload = await api('/api/admin/organizations');
+  state.organizations = Array.isArray(payload.organizations) ? payload.organizations : [];
+  state.organizationPermissions = payload.permissions || {};
+  state.activeOrganizationId = String(payload.activeOrganizationId || '');
+  const preferred = String(preferredOrganizationId || state.organizationId || state.activeOrganizationId || '');
+  state.organizationId = state.organizations.some((item) => item.id === preferred)
+    ? preferred
+    : (state.organizations[0]?.id || '');
+  state.organizationName = organizationLabel(currentOrganization());
+  renderOrganizations();
+  els.companiesTableWrap.setAttribute('aria-busy', 'false');
 }
 
 function roleLabel(role, isRoot = false) { if (isRoot) return 'Administrador raiz'; return role === 'E3I_ADMIN' ? 'Administrador E3I' : 'Operador'; }
@@ -115,8 +310,9 @@ async function linkUserToOrganization(user) {
   if (!confirmed) return;
   state.userBusy = true; renderUsers(); setStatus('Vinculando usuário à empresa…');
   try {
-    await adminWrite(userEndpoint(user.id, 'link'));
+    await adminWrite(`/api/admin/organizations/${encodeURIComponent(state.organizationId)}/members/${encodeURIComponent(user.id)}`, { method: 'PUT', body: { makeActive: false } });
     await loadUsers();
+    await loadOrganizations(state.organizationId);
     setStatus(`Usuário vinculado a ${company} com sucesso.`, 'success');
   } catch (error) { handleAdminError(error, 'Não foi possível vincular o usuário à empresa'); }
   finally { state.userBusy = false; renderUsers(); }
@@ -157,8 +353,17 @@ async function handleAccessChange(tool) {
   catch (error) { handleAdminError(error, 'Não foi possível alterar o acesso'); }
   finally { state.busyToolId = ''; renderTools(); }
 }
-async function loadTools() { els.toolsGrid.setAttribute('aria-busy', 'true'); const payload = await api('/api/client-tools'); state.organizationId = payload.organizationId || ''; state.tools = Array.isArray(payload.tools) ? payload.tools : []; els.organizationId.textContent = state.organizationId || 'Não identificada'; renderTools(); els.toolsGrid.setAttribute('aria-busy', 'false'); if (!state.organizationId) throw new Error('O Portal não informou a organização ativa.'); }
-async function loadUsers() { if (!state.organizationId) return; els.usersTableWrap.setAttribute('aria-busy', 'true'); const payload = await api(usersEndpoint()); state.canDelegateAdmin = payload?.permissions?.canDelegateAdmin === true; state.canManageMemberships = payload?.permissions?.canManageMemberships === true; state.organizationName = String(payload?.organization?.name || ''); state.users = Array.isArray(payload.users) ? payload.users.map(normalizeUser) : []; els.organizationId.textContent = state.organizationName ? `${state.organizationName} · ${state.organizationId}` : (state.organizationId || 'Não identificada'); renderUsers(); els.usersTableWrap.setAttribute('aria-busy', 'false'); }
+async function loadTools() {
+  els.toolsGrid.setAttribute('aria-busy', 'true');
+  const payload = await api('/api/client-tools');
+  const clientToolsOrganizationId = String(payload.organizationId || '');
+  if (clientToolsOrganizationId) state.activeOrganizationId = clientToolsOrganizationId;
+  state.tools = state.organizationId === state.activeOrganizationId && Array.isArray(payload.tools) ? payload.tools : [];
+  renderOrganizationContext();
+  renderTools();
+  els.toolsGrid.setAttribute('aria-busy', 'false');
+}
+async function loadUsers() { if (!state.organizationId) return; els.usersTableWrap.setAttribute('aria-busy', 'true'); const payload = await api(usersEndpoint()); state.canDelegateAdmin = payload?.permissions?.canDelegateAdmin === true; state.canManageMemberships = payload?.permissions?.canManageMemberships === true; state.organizationName = String(payload?.organization?.name || organizationLabel(currentOrganization()) || ''); state.users = Array.isArray(payload.users) ? payload.users.map(normalizeUser) : []; renderOrganizationContext(); renderUsers(); els.usersTableWrap.setAttribute('aria-busy', 'false'); }
 async function loadSettings({ announce = false } = {}) {
   if (!state.organizationId) return; state.settingsBusy = true; renderSettings(); if (announce) setStatus('Recarregando parâmetros…');
   try { const payload = await api(settingsEndpoint()); state.settings = normalizeSettings(payload.settings); state.settingsVersion = Number.isInteger(payload.version) ? payload.version : 0; state.settingsUpdatedAt = payload.updatedAt || ''; state.audit = Array.isArray(payload.audit) ? payload.audit : []; renderSettings(); renderAudit(); if (announce) setStatus('Parâmetros recarregados.', 'success'); }
@@ -175,6 +380,12 @@ async function saveSettings() {
 }
 
 els.tabs.forEach((tab) => tab.addEventListener('click', () => switchTab(tab.dataset.tab)));
+els.companySearchInput.addEventListener('input', (e) => { state.companyFilter = e.target.value; renderOrganizations(); });
+els.organizationSelect.addEventListener('change', (e) => selectOrganization(e.target.value));
+els.activateOrganizationButton.addEventListener('click', () => activateOrganization());
+els.createOrganizationButton.addEventListener('click', () => openOrganizationDialog());
+els.organizationForm.addEventListener('submit', (e) => { e.preventDefault(); saveOrganization(); });
+q('[data-organization-cancel]').addEventListener('click', () => els.organizationDialog.close());
 els.searchInput.addEventListener('input', (e) => { state.filter = e.target.value; renderTools(); });
 els.userSearchInput.addEventListener('input', (e) => { state.userFilter = e.target.value; renderUsers(); });
 els.userStatusFilter.addEventListener('change', (e) => { state.userStatus = e.target.value; renderUsers(); });
@@ -185,7 +396,23 @@ els.reloadSettings.addEventListener('click', () => loadSettings({ announce: true
 els.saveSettings.addEventListener('click', saveSettings);
 
 (async function boot() {
-  setStatus('Validando sessão administrativa e carregando dados…');
-  try { await loadTools(); await Promise.all([loadUsers(), loadSettings()]); setStatus('Administração central carregada.', 'success'); }
-  catch (error) { handleAdminError(error, 'Não foi possível carregar a administração central'); }
+  setStatus('Validando sessão administrativa e carregando empresas…');
+  try {
+    await loadOrganizations();
+    if (!state.organizationId) {
+      renderTools();
+      renderUsers();
+      renderSettings();
+      setStatus('Nenhuma empresa está disponível. Cadastre uma empresa para iniciar a gestão.', 'warning');
+      return;
+    }
+    await Promise.all([loadUsers(), loadSettings()]);
+    await loadTools();
+    setStatus(
+      state.organizationId === state.activeOrganizationId
+        ? 'Administração central carregada no contexto correto da empresa.'
+        : 'Administração carregada. A empresa em gestão difere da empresa ativa da sessão.',
+      state.organizationId === state.activeOrganizationId ? 'success' : 'warning',
+    );
+  } catch (error) { handleAdminError(error, 'Não foi possível carregar a administração central'); }
 })();
