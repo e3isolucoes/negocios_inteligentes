@@ -15,7 +15,7 @@ const qa = (selector) => [...document.querySelectorAll(selector)];
 const els = {
   organizationId: q('#organizationId'), organizationSelect: q('#organizationSelect'), activeOrganizationHint: q('#activeOrganizationHint'), activateOrganizationButton: q('#activateOrganizationButton'), organizationContextText: q('#organizationContextText'), settingsVersion: q('#settingsVersion'), metricUsers: q('#metricUsers'), metricTotal: q('#metricTotal'), metricGranted: q('#metricGranted'), metricIntelligence: q('#metricIntelligence'), metricIntelligenceHint: q('#metricIntelligenceHint'), metricUpdated: q('#metricUpdated'), globalStatus: q('#globalStatus'),
   companiesTableBody: q('#companiesTableBody'), companiesTableWrap: q('#companiesTableWrap'), companySearchInput: q('#companySearchInput'), createOrganizationButton: q('#createOrganizationButton'), organizationDialog: q('#organizationDialog'), organizationForm: q('#organizationForm'), organizationDialogEyebrow: q('#organizationDialogEyebrow'), organizationDialogTitle: q('#organizationDialogTitle'), organizationFormId: q('#organizationFormId'), organizationLegalName: q('#organizationLegalName'), organizationTradeName: q('#organizationTradeName'), organizationDocument: q('#organizationDocument'), organizationStatus: q('#organizationStatus'), organizationSaveButton: q('#organizationSaveButton'),
-  toolsGrid: q('#toolsGrid'), searchInput: q('#searchInput'), tabs: qa('[data-tab]'), panels: qa('[data-panel]'),
+  toolsGrid: q('#toolsGrid'), searchInput: q('#searchInput'), accessReadinessBadge: q('#accessReadinessBadge'), accessManagedOrganization: q('#accessManagedOrganization'), accessActiveOrganization: q('#accessActiveOrganization'), accessLinkedUsers: q('#accessLinkedUsers'), accessGrantedTools: q('#accessGrantedTools'), accessReadinessMessage: q('#accessReadinessMessage'), tabs: qa('[data-tab]'), panels: qa('[data-panel]'),
   usersTableBody: q('#usersTableBody'), usersTableWrap: q('#usersTableWrap'), userSearchInput: q('#userSearchInput'), userStatusFilter: q('#userStatusFilter'), createUserButton: q('#createUserButton'), userDialog: q('#userDialog'), userForm: q('#userForm'), userDialogEyebrow: q('#userDialogEyebrow'), userDialogTitle: q('#userDialogTitle'), userId: q('#userId'), userName: q('#userName'), userEmail: q('#userEmail'), userRole: q('#userRole'), userOrganization: q('#userOrganization'), userSaveButton: q('#userSaveButton'),
   settingsForm: q('#settingsForm'), saveSettings: q('#saveSettings'), reloadSettings: q('#reloadSettings'), intelligenceEnabled: q('#intelligenceEnabled'), ingestionEnabled: q('#ingestionEnabled'), agentMode: q('#agentMode'), requireHumanApproval: q('#requireHumanApproval'), allowSensitivePersonalData: q('#allowSensitivePersonalData'), defaultRetentionClass: q('#defaultRetentionClass'), mappingPurposeId: q('#mappingPurposeId'), auditLevel: q('#auditLevel'), savingValidationRequired: q('#savingValidationRequired'), auditCount: q('#auditCount'), auditList: q('#auditList'),
   confirmDialog: q('#confirmDialog'), confirmTitle: q('#confirmTitle'), confirmMessage: q('#confirmMessage'),
@@ -47,6 +47,35 @@ function updateMetrics() {
   els.metricIntelligenceHint.textContent = state.settings.intelligence.ingestionEnabled ? 'ingestão habilitada' : 'ingestão desligada';
   els.metricUpdated.textContent = state.settingsUpdatedAt ? formatDate(state.settingsUpdatedAt) : 'Nunca';
   els.settingsVersion.textContent = `Configuração v${state.settingsVersion}`;
+  renderAccessReadiness();
+}
+
+function renderAccessReadiness() {
+  if (!els.accessReadinessBadge) return;
+  const managed = currentOrganization();
+  const active = state.organizations.find((item) => item.id === state.activeOrganizationId) || null;
+  const linkedUsers = state.users.filter((user) => user.linked && user.status === 'ACTIVE').length;
+  const grantedTools = state.tools.filter((tool) => Boolean(tool.granted)).length;
+  const contextAligned = Boolean(state.organizationId) && state.organizationId === state.activeOrganizationId;
+  const hasLinkedUsers = linkedUsers > 0;
+  const ready = contextAligned && hasLinkedUsers;
+
+  els.accessManagedOrganization.textContent = managed ? organizationLabel(managed) : 'Não identificada';
+  els.accessActiveOrganization.textContent = active ? organizationLabel(active) : (state.activeOrganizationId || 'Não identificada');
+  els.accessLinkedUsers.textContent = String(linkedUsers);
+  els.accessGrantedTools.textContent = String(grantedTools);
+  els.accessReadinessBadge.textContent = ready ? 'Contexto pronto' : 'Ação necessária';
+  els.accessReadinessBadge.className = `badge ${ready ? 'granted' : 'pending'}`;
+
+  if (!state.organizationId) {
+    els.accessReadinessMessage.textContent = 'Cadastre ou selecione uma empresa antes de configurar acessos.';
+  } else if (!contextAligned) {
+    els.accessReadinessMessage.textContent = 'A empresa em gestão não é a empresa ativa da sessão. Use “Tornar ativa” antes de conceder ou testar ferramentas.';
+  } else if (!hasLinkedUsers) {
+    els.accessReadinessMessage.textContent = 'A empresa está ativa, mas ainda não possui usuários vinculados. Vincule ao menos um usuário na aba Usuários.';
+  } else {
+    els.accessReadinessMessage.textContent = 'Empresa, sessão e vínculos estão alinhados. Alterações de ferramenta serão aplicadas neste contexto.';
+  }
 }
 
 function badge(text, tone = 'neutral') { const el = document.createElement('span'); el.className = `badge ${tone}`; el.textContent = text; return el; }
@@ -88,6 +117,7 @@ function renderOrganizationContext() {
     ? `Você está administrando a mesma empresa usada pela sessão: ${selectedLabel}.`
     : `Você está administrando ${selectedLabel}, mas a sessão ainda usa ${activeLabel}. Torne a empresa em gestão ativa antes de conceder ferramentas ou testar o acesso.`;
   els.activateOrganizationButton.disabled = !state.organizationId || state.organizationId === state.activeOrganizationId || state.companyBusy;
+  renderAccessReadiness();
 }
 function renderOrganizationSelect() {
   els.organizationSelect.replaceChildren();
@@ -404,9 +434,10 @@ async function loadTools() {
   state.tools = state.organizationId === state.activeOrganizationId && Array.isArray(payload.tools) ? payload.tools : [];
   renderOrganizationContext();
   renderTools();
+  renderAccessReadiness();
   els.toolsGrid.setAttribute('aria-busy', 'false');
 }
-async function loadUsers() { if (!state.organizationId) return; els.usersTableWrap.setAttribute('aria-busy', 'true'); const payload = await api(usersEndpoint()); state.canDelegateAdmin = payload?.permissions?.canDelegateAdmin === true; state.canManageMemberships = payload?.permissions?.canManageMemberships === true; state.organizationName = String(payload?.organization?.name || organizationLabel(currentOrganization()) || ''); state.users = Array.isArray(payload.users) ? payload.users.map(normalizeUser) : []; renderOrganizationContext(); renderUsers(); els.usersTableWrap.setAttribute('aria-busy', 'false'); }
+async function loadUsers() { if (!state.organizationId) return; els.usersTableWrap.setAttribute('aria-busy', 'true'); const payload = await api(usersEndpoint()); state.canDelegateAdmin = payload?.permissions?.canDelegateAdmin === true; state.canManageMemberships = payload?.permissions?.canManageMemberships === true; state.organizationName = String(payload?.organization?.name || organizationLabel(currentOrganization()) || ''); state.users = Array.isArray(payload.users) ? payload.users.map(normalizeUser) : []; renderOrganizationContext(); renderUsers(); renderAccessReadiness(); els.usersTableWrap.setAttribute('aria-busy', 'false'); }
 async function loadSettings({ announce = false } = {}) {
   if (!state.organizationId) return; state.settingsBusy = true; renderSettings(); if (announce) setStatus('Recarregando parâmetros…');
   try { const payload = await api(settingsEndpoint()); state.settings = normalizeSettings(payload.settings); state.settingsVersion = Number.isInteger(payload.version) ? payload.version : 0; state.settingsUpdatedAt = payload.updatedAt || ''; state.audit = Array.isArray(payload.audit) ? payload.audit : []; renderSettings(); renderAudit(); if (announce) setStatus('Parâmetros recarregados.', 'success'); }
