@@ -114,7 +114,52 @@ export async function authenticate(event, documentClient, tableName) {
   const userId = payload['custom:legacy_user_id'] || payload['cognito:username'] || payload.sub;
   const cognitoIssuer = String(process.env.AUTH_ISSUER || '').replace(/\/+$/, '');
   if (cognitoIssuer && issuer === cognitoIssuer) {
-    const authorization = resolveTokenAuthorization(payload, event.headers);
+    let authorization;
+    try {
+      authorization = resolveTokenAuthorization(payload, event.headers);
+    } catch (error) {
+      const legacyClaimGap = error?.statusCode === 401
+        && /Token sem (workspace|papel) autorizado\./.test(String(error.message || ''));
+      if (!legacyClaimGap) throw error;
+
+      // Compatibilidade segura durante rollout do Pre Token Generation:
+      // tokens emitidos pelo pool antes do trigger podem não conter os claims
+      // derivados, mas ainda carregam o seletor de workspace gravado pelo Portal.
+      // O seletor nunca concede acesso sozinho: papel e grants são relidos do
+      // MEMBER canônico no DynamoDB antes de autorizar qualquer operação.
+      const headerWorkspaceId = String(
+        event.headers?.['x-workspace-id'] || event.headers?.['X-Workspace-Id'] || '',
+      ).trim();
+      const activeWorkspaceId = String(payload['custom:active_workspace_id'] || '').trim();
+
+      if (headerWorkspaceId && activeWorkspaceId && headerWorkspaceId !== activeWorkspaceId) {
+        throw Object.assign(
+          new Error('Workspace do cabeçalho diverge da sessão ativa.'),
+          { statusCode: 403 },
+        );
+      }
+
+      const result = await documentClient.send(new QueryCommand({
+        TableName: tableName,
+        IndexName: MEMBER_INDEX,
+        KeyConditionExpression: 'GSI1PK = :memberPk AND begins_with(GSI1SK, :workspacePrefix)',
+        ExpressionAttributeValues: {
+          ':memberPk': memberSk(userId),
+          ':workspacePrefix': 'WORKSPACE#',
+        },
+      }));
+      const membership = resolveWorkspaceMembership(
+        result.Items || [],
+        headerWorkspaceId || activeWorkspaceId,
+      );
+      authorization = {
+        workspaceId: membership.workspaceId,
+        role: membership.role || 'member',
+        moduleGrants: Array.isArray(membership.module_grants)
+          ? membership.module_grants
+          : null,
+      };
+    }
     return {
       userId,
       email: payload.email,
