@@ -114,7 +114,7 @@ test('tentativa de usar workspaceId da etiqueta é negada antes de ler RECORD se
   assert.equal(recordReadAttempted, false);
 });
 
-test('token legado usa active_workspace_id somente após validar MEMBER canônico', () => {
+test('fallback Cognito usa x-workspace-id somente após validar MEMBER canônico', () => {
   const memberships = [
     {
       PK: 'WORKSPACE#workspace-a', SK: 'MEMBER#user-1',
@@ -133,31 +133,13 @@ test('token legado usa active_workspace_id somente após validar MEMBER canônic
   assert.deepEqual(
     resolveLegacyCognitoAuthorization(
       memberships,
-      { 'custom:active_workspace_id': 'workspace-b' },
-      {},
+      { 'x-workspace-id': 'workspace-b' },
     ),
     {
       workspaceId: 'workspace-b',
       role: 'manager',
       moduleGrants: ['obrigacoes', 'administracao'],
     },
-  );
-});
-
-test('fallback legado rejeita cabeçalho diferente da empresa ativa da sessão', () => {
-  const memberships = [{
-    PK: 'WORKSPACE#workspace-b', SK: 'MEMBER#user-1',
-    workspaceId: 'workspace-b', userId: 'user-1',
-    active: true, entityType: 'member', role: 'member',
-  }];
-
-  assert.throws(
-    () => resolveLegacyCognitoAuthorization(
-      memberships,
-      { 'custom:active_workspace_id': 'workspace-b' },
-      { 'x-workspace-id': 'workspace-a' },
-    ),
-    (error) => error.statusCode === 403 && /diverge da sessão ativa/i.test(error.message),
   );
 });
 
