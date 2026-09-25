@@ -54,9 +54,11 @@ function e3iAdminUsersOrganization(authResult, dataset) {
 function e3iAdminUsersRequireAdmin(req, res) {
   const authResult = validateSession(req, res); if (!authResult) return null; let dataset; try { dataset = e3iAdminUsersReadDataset(); } catch (_) { return res.status(500).json({ code: 'INTERNAL_ERROR', error: 'Não foi possível carregar os usuários.' }); }
   if (e3iAdminUsersRole(authResult, dataset) !== 'E3I_ADMIN') { res.status(403).json({ code: 'ADMIN_REQUIRED', error: 'Acesso administrativo necessário.' }); return null; }
-  const organizationId = e3iAdminUsersOrganization(authResult, dataset); const requested = String(req.params?.organizationId || '').trim(); if (!organizationId || !requested || organizationId !== requested) { res.status(404).json({ code: 'NOT_FOUND', error: 'Recurso não encontrado.' }); return null; }
-  const c = e3iAdminUsersAuthCandidates(authResult); const stored = e3iAdminUsersStoredUser(authResult, dataset); const actorEmail = e3iAdminUsersNormalizeEmail(authResult?.email || c.user?.email || stored?.email);
-  return { authResult, dataset, organizationId, actorId: String(authResult?.userId || authResult?.actorId || c.user?.id || stored?.id || 'admin').slice(0,160), actorEmail, isRoot: actorEmail === E3I_ADMIN_USERS_ROOT_EMAIL };
+  const c = e3iAdminUsersAuthCandidates(authResult); const stored = e3iAdminUsersStoredUser(authResult, dataset); const actorEmail = e3iAdminUsersNormalizeEmail(authResult?.email || c.user?.email || stored?.email); const isRoot = actorEmail === E3I_ADMIN_USERS_ROOT_EMAIL;
+  const activeOrganizationId = e3iAdminUsersOrganization(authResult, dataset); const requested = String(req.params?.organizationId || '').trim();
+  const requestedExists = e3iAdminUsersTenants(dataset).some((item) => String(item?.id || '') === requested);
+  if (!requested || (isRoot ? !requestedExists : (!activeOrganizationId || activeOrganizationId !== requested))) { res.status(404).json({ code: 'NOT_FOUND', error: 'Recurso não encontrado.' }); return null; }
+  return { authResult, dataset, organizationId: requested, activeOrganizationId, actorId: String(authResult?.userId || authResult?.actorId || c.user?.id || stored?.id || 'admin').slice(0,160), actorEmail, isRoot };
 }
 function e3iAdminUsersRequireWrite(req, res) { if (String(req.get('x-e3i-admin-request') || '') !== '1') { res.status(403).json({ code: 'ADMIN_REQUEST_HEADER_REQUIRED', error: 'Requisição administrativa inválida.' }); return false; } return true; }
 function e3iAdminUsersMembership(dataset, organizationId, userId) { return e3iAdminUsersMemberships(dataset).find((m) => String(m?.organizationId || m?.tenantId || '') === String(organizationId) && String(m?.userId || m?.memberId || '') === String(userId)); }
