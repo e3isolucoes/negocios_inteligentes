@@ -274,6 +274,7 @@ function renderUsers() {
     const actions = document.createElement('td'); actions.className = 'actions-col'; const bar = document.createElement('div'); bar.className = 'user-actions';
     const protectedAdmin = user.role === 'E3I_ADMIN' && !state.canDelegateAdmin;
     if (!user.linked && state.canManageMemberships) bar.append(userActionButton('Vincular à empresa', 'btn-primary', () => linkUserToOrganization(user), false));
+    if (user.linked && state.canManageMemberships) bar.append(userActionButton('Definir como ativa', 'btn-ghost', () => makeUserOrganizationActive(user), false));
     bar.append(userActionButton('Editar', 'btn-ghost', () => openUserDialog(user), protectedAdmin));
     bar.append(userActionButton('Encerrar sessões', 'btn-ghost', () => userCommand(user, 'revoke-sessions', 'Encerrar sessões?', `Todas as sessões ativas de ${user.name || user.email} serão revogadas.`, false), protectedAdmin));
     bar.append(userActionButton('Forçar 1º acesso', 'btn-ghost', () => userCommand(user, 'force-first-login', 'Forçar novo primeiro acesso?', `O usuário ${user.name || user.email} precisará validar o e-mail e definir uma nova senha. As sessões atuais serão encerradas.`, true), protectedAdmin));
@@ -315,6 +316,24 @@ async function linkUserToOrganization(user) {
     await loadOrganizations(state.organizationId);
     setStatus(`Usuário vinculado a ${company} com sucesso.`, 'success');
   } catch (error) { handleAdminError(error, 'Não foi possível vincular o usuário à empresa'); }
+  finally { state.userBusy = false; renderUsers(); }
+}
+
+async function makeUserOrganizationActive(user) {
+  if (state.userBusy || !state.canManageMemberships || !user.linked || !state.organizationId) return;
+  const company = state.organizationName || organizationLabel(currentOrganization()) || state.organizationId;
+  const confirmed = await confirmAction({
+    title: 'Definir empresa ativa para o usuário?',
+    message: `${company} passará a ser o contexto ativo de ${user.name || user.email}. As sessões abertas desse usuário serão atualizadas para a mesma empresa.`,
+    danger: false,
+  });
+  if (!confirmed) return;
+  state.userBusy = true; renderUsers(); setStatus('Atualizando empresa ativa do usuário…');
+  try {
+    await adminWrite(`/api/admin/organizations/${encodeURIComponent(state.organizationId)}/members/${encodeURIComponent(user.id)}`, { method: 'PUT', body: { makeActive: true } });
+    await loadUsers();
+    setStatus(`${company} definida como empresa ativa para ${user.name || user.email}.`, 'success');
+  } catch (error) { handleAdminError(error, 'Não foi possível definir a empresa ativa do usuário'); }
   finally { state.userBusy = false; renderUsers(); }
 }
 async function userCommand(user, action, title, message, danger) {
