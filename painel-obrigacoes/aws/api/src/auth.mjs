@@ -53,6 +53,32 @@ export function resolveWorkspaceMembership(memberships, requestedWorkspaceId) {
   return membership;
 }
 
+export function resolveLegacyCognitoAuthorization(memberships, payload = {}, headers = {}) {
+  const headerWorkspaceId = String(
+    headers?.['x-workspace-id'] || headers?.['X-Workspace-Id'] || '',
+  ).trim();
+  const activeWorkspaceId = String(payload['custom:active_workspace_id'] || '').trim();
+
+  if (headerWorkspaceId && activeWorkspaceId && headerWorkspaceId !== activeWorkspaceId) {
+    throw Object.assign(
+      new Error('Workspace do cabeçalho diverge da sessão ativa.'),
+      { statusCode: 403 },
+    );
+  }
+
+  const membership = resolveWorkspaceMembership(
+    memberships,
+    headerWorkspaceId || activeWorkspaceId,
+  );
+  return {
+    workspaceId: membership.workspaceId,
+    role: membership.role || 'member',
+    moduleGrants: Array.isArray(membership.module_grants)
+      ? membership.module_grants
+      : null,
+  };
+}
+
 
 function parseModuleGrantsClaim(value) {
   if (value === undefined || value === null || value === '') return [];
@@ -127,18 +153,6 @@ export async function authenticate(event, documentClient, tableName) {
       // derivados, mas ainda carregam o seletor de workspace gravado pelo Portal.
       // O seletor nunca concede acesso sozinho: papel e grants são relidos do
       // MEMBER canônico no DynamoDB antes de autorizar qualquer operação.
-      const headerWorkspaceId = String(
-        event.headers?.['x-workspace-id'] || event.headers?.['X-Workspace-Id'] || '',
-      ).trim();
-      const activeWorkspaceId = String(payload['custom:active_workspace_id'] || '').trim();
-
-      if (headerWorkspaceId && activeWorkspaceId && headerWorkspaceId !== activeWorkspaceId) {
-        throw Object.assign(
-          new Error('Workspace do cabeçalho diverge da sessão ativa.'),
-          { statusCode: 403 },
-        );
-      }
-
       const result = await documentClient.send(new QueryCommand({
         TableName: tableName,
         IndexName: MEMBER_INDEX,
@@ -148,17 +162,11 @@ export async function authenticate(event, documentClient, tableName) {
           ':workspacePrefix': 'WORKSPACE#',
         },
       }));
-      const membership = resolveWorkspaceMembership(
+      authorization = resolveLegacyCognitoAuthorization(
         result.Items || [],
-        headerWorkspaceId || activeWorkspaceId,
+        payload,
+        event.headers,
       );
-      authorization = {
-        workspaceId: membership.workspaceId,
-        role: membership.role || 'member',
-        moduleGrants: Array.isArray(membership.module_grants)
-          ? membership.module_grants
-          : null,
-      };
     }
     return {
       userId,
