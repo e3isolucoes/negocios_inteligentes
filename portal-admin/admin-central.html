@@ -64,7 +64,7 @@
     <nav class="tabs" aria-label="Áreas de administração">
       <button class="tab is-active" type="button" data-tab="companies" aria-controls="panel-companies" aria-selected="true">Empresas</button>
       <button class="tab" type="button" data-tab="users" aria-controls="panel-users" aria-selected="false">Usuários</button>
-      <button class="tab" type="button" data-tab="access" aria-controls="panel-access" aria-selected="false">Ferramentas</button>
+      <button class="tab" type="button" data-tab="access" aria-controls="panel-access" aria-selected="false">Acessos</button>
       <button class="tab" type="button" data-tab="parameters" aria-controls="panel-parameters" aria-selected="false">Parâmetros</button>
       <button class="tab" type="button" data-tab="governance" aria-controls="panel-governance" aria-selected="false">Governança</button>
     </nav>
@@ -122,9 +122,25 @@
 
     <section id="panel-access" class="panel tab-panel" data-panel="access" aria-labelledby="access-heading" hidden>
       <div class="panel-head">
-        <div><span class="eyebrow">CONTROLE DE ACESSO</span><h2 id="access-heading">Ferramentas da organização</h2><p>Concessões usam os contratos atuais do Portal e permanecem independentes do E3I Intelligence.</p></div>
+        <div><span class="eyebrow">CONTROLE DE ACESSO</span><h2 id="access-heading">Acessos da empresa</h2><p>Valide empresa, vínculos e contexto ativo antes de conceder ferramentas. O grant é sempre aplicado à empresa selecionada e confirmada pela sessão.</p></div>
         <label class="search-field"><span class="sr-only">Buscar ferramenta</span><input id="searchInput" type="search" placeholder="Buscar ferramenta…" autocomplete="off" /></label>
       </div>
+      <section class="access-readiness" aria-labelledby="access-readiness-heading">
+        <div class="access-readiness-head">
+          <div>
+            <span class="eyebrow">DIAGNÓSTICO DE CONTEXTO</span>
+            <h3 id="access-readiness-heading">Prontidão de acesso</h3>
+          </div>
+          <span id="accessReadinessBadge" class="badge pending">Verificando</span>
+        </div>
+        <div class="access-readiness-grid">
+          <article><span>Empresa em gestão</span><strong id="accessManagedOrganization">—</strong><small>empresa selecionada na Administração</small></article>
+          <article><span>Empresa ativa da sessão</span><strong id="accessActiveOrganization">—</strong><small>contexto usado pelo Portal e pelo Painel</small></article>
+          <article><span>Usuários vinculados</span><strong id="accessLinkedUsers">—</strong><small>memberships ativos na empresa</small></article>
+          <article><span>Ferramentas liberadas</span><strong id="accessGrantedTools">—</strong><small>grants confirmados pelo servidor</small></article>
+        </div>
+        <p id="accessReadinessMessage" class="access-readiness-message">Carregando contexto de acesso…</p>
+      </section>
       <div id="toolsGrid" class="tools-grid" aria-live="polite" aria-busy="true"></div>
     </section>
 
