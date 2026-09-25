@@ -84,7 +84,7 @@
       </div>
       <div id="usersTableWrap" class="table-wrap" aria-live="polite" aria-busy="true">
         <table class="data-table">
-          <thead><tr><th>Usuário</th><th>Papel</th><th>Status</th><th>Primeiro acesso</th><th class="actions-col">Ações</th></tr></thead>
+          <thead><tr><th>Usuário</th><th>Papel</th><th>Empresa vinculada</th><th>Status</th><th>Primeiro acesso</th><th class="actions-col">Ações</th></tr></thead>
           <tbody id="usersTableBody"></tbody>
         </table>
       </div>
@@ -141,6 +141,7 @@
       <label class="field-stack"><span>Nome</span><input id="userName" type="text" maxlength="120" required autocomplete="name" /></label>
       <label class="field-stack"><span>E-mail</span><input id="userEmail" type="email" maxlength="254" required autocomplete="email" /></label>
       <label class="field-stack"><span>Papel no Portal</span><select id="userRole"><option value="OPERATOR">Operador</option><option value="E3I_ADMIN">Administrador E3I</option></select><small>Privilégio administrativo permite gerir usuários, acessos e parâmetros desta organização.</small></label>
+      <label class="field-stack"><span>Empresa ativa</span><input id="userOrganization" type="text" readonly /><small>O vínculo empresarial é controlado pelo backend. Usuários existentes sem vínculo podem ser associados à empresa ativa pelo administrador raiz.</small></label>
       <div class="notice"><strong>Primeiro acesso seguro:</strong> novos usuários não recebem senha compartilhada. O acesso é ativado pelo fluxo de código enviado ao e-mail cadastrado e criação de senha forte.</div>
       <div class="dialog-actions"><button type="button" class="btn btn-secondary" data-user-cancel>Cancelar</button><button id="userSaveButton" type="submit" class="btn btn-primary">Salvar usuário</button></div>
     </form>
