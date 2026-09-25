@@ -158,6 +158,41 @@ function e3iAdminOrganizationsPublic(dataset, tenant) {
     updatedAt: String(tenant?.updatedAt || tenant?.updated_at || ''),
   };
 }
+function e3iAdminOrganizationsSyncLiveContext(user, organizationId) {
+  const userId = String(user?.id || user?.userId || '');
+  const email = e3iAdminOrganizationsNormalizeEmail(user?.email);
+  try {
+    if (typeof users !== 'undefined' && Array.isArray(users)) {
+      const liveUser = users.find((item) =>
+        (userId && String(item?.id || item?.userId || '') === userId)
+        || (email && e3iAdminOrganizationsNormalizeEmail(item?.email) === email)
+      );
+      if (liveUser) {
+        liveUser.tenantId = organizationId;
+        liveUser.organizationId = organizationId;
+        liveUser.activeOrganizationId = organizationId;
+        liveUser.updatedAt = new Date().toISOString();
+      }
+    }
+  } catch (_) {}
+  try {
+    if (typeof sessions !== 'undefined' && Array.isArray(sessions)) {
+      for (const session of sessions) {
+        const matches = userId && String(session?.userId || session?.actorId || '') === userId;
+        if (!matches || session?.revokedAt) continue;
+        session.tenantId = organizationId;
+        session.organizationId = organizationId;
+        session.activeOrganizationId = organizationId;
+        if (session.user && typeof session.user === 'object') {
+          session.user.tenantId = organizationId;
+          session.user.organizationId = organizationId;
+          session.user.activeOrganizationId = organizationId;
+        }
+      }
+    }
+  } catch (_) {}
+}
+
 function e3iAdminOrganizationsAudit(principal, action, organizationId, detail='') {
   try {
     if (!principal.dataset.tables || typeof principal.dataset.tables !== 'object') principal.dataset.tables = {};
@@ -314,7 +349,9 @@ app.post('/api/admin/organizations/:organizationId/activate', (req, res) => {
   }
   user.tenantId = tenant.id;
   user.organizationId = tenant.id;
+  user.activeOrganizationId = tenant.id;
   user.updatedAt = new Date().toISOString();
+  e3iAdminOrganizationsSyncLiveContext(user, tenant.id);
   e3iAdminOrganizationsAudit(principal, 'ACTIVE_ORGANIZATION_CHANGED', tenant.id, `user=${userId}`);
   e3iAdminOrganizationsWriteDataset(principal.dataset);
   return res.json({
